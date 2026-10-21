@@ -35,9 +35,10 @@ export class ValidarIdentificacionEcuatoriana implements ValidatorConstraintInte
             return digitoVerificador === parseInt(val.charAt(9), 10);
         }
 
-        // RUC Sociedad Pública (Tercer dígito = 6)
+        // RUC Sociedad Pública (Tercer dígito = 6).
+        // El establecimiento son los últimos 4 dígitos (índices 9 a 12).
         if (tercerDigito === 6 && val.length === 13) {
-            if (val.substring(10, 13) !== '0001') return false;
+            if (val.substring(9, 13) !== '0001') return false;
             const coeficientes = [3, 2, 7, 6, 5, 4, 3, 2];
             let suma = 0;
             for (let i = 0; i < 8; i++) suma += parseInt(val.charAt(i), 10) * coeficientes[i];
