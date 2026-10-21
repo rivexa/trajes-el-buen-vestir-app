@@ -41,7 +41,6 @@ export class ClientesService {
         };
     }
 
-    // Buscar cliente por cédula o RUC
     async buscarPorCedula(cedulaRuc: string) {
         const { data, error } = await this.supabaseService.getClient()
             .from('clientes')
@@ -58,7 +57,6 @@ export class ClientesService {
         return data;
     }
 
-    // Registrar un cliente nuevo
     async crearCliente(clienteData: CreateClienteDto) {
         const { data, error } = await this.supabaseService.getClient()
             .from('clientes')
@@ -114,7 +112,7 @@ export class ClientesService {
         if (!data || data.length === 0) {
             throw new NotFoundException('Cliente no encontrado.');
         }
-        return { message: 'Cliente eliminado correctamente' };
+        return { mensaje: 'Cliente eliminado correctamente' };
     }
 
     private falloPersistencia(error: { code?: string; message?: string }, mensaje: string): never {

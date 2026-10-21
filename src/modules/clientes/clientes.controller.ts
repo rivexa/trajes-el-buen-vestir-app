@@ -18,12 +18,12 @@ export class ClientesController {
 
     @Get('buscar/:cedula')
     async buscarCliente(@Param('cedula') cedula: string) {
-        return await this.clientesService.buscarPorCedula(cedula);
+        return this.clientesService.buscarPorCedula(cedula);
     }
 
     @Post()
-    async registrarCliente(@Body() body: CreateClienteDto) {
-        return await this.clientesService.crearCliente(body);
+    async crearCliente(@Body() body: CreateClienteDto) {
+        return this.clientesService.crearCliente(body);
     }
 
     @Patch(':id')
