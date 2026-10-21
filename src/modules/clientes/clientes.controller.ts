@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, DefaultValuePipe, ParseIntPipe } from '@nestjs/common';
+import { CLIENTES_LIMITE_POR_DEFECTO, CLIENTES_PAGINA_MINIMA } from './clientes.consulta';
 import { ClientesService } from './clientes.service';
 import { CreateClienteDto, UpdateClienteDto } from './dto/cliente.dto';
 
@@ -8,11 +9,11 @@ export class ClientesController {
 
     @Get()
     async obtenerTodos(
-        @Query('page') page: string,
-        @Query('limit') limit: string,
-        @Query('search') search: string
+        @Query('page', new DefaultValuePipe(CLIENTES_PAGINA_MINIMA), ParseIntPipe) page: number,
+        @Query('limit', new DefaultValuePipe(CLIENTES_LIMITE_POR_DEFECTO), ParseIntPipe) limit: number,
+        @Query('search') search?: string,
     ) {
-        return this.clientesService.obtenerTodos(Number(page) || 1, Number(limit) || 10, search);
+        return this.clientesService.obtenerTodos(page, limit, search ?? '');
     }
 
     @Get('buscar/:cedula')

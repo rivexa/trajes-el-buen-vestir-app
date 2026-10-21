@@ -1,22 +1,25 @@
 import { Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { SupabaseService } from '../../config/supabase.service';
+import { acotarPaginacionClientes, sanitizarBusquedaCliente } from './clientes.consulta';
 import { CreateClienteDto, UpdateClienteDto } from './dto/cliente.dto';
 
 @Injectable()
 export class ClientesService {
     constructor(private readonly supabaseService: SupabaseService) { }
 
-    async obtenerTodos(page: number = 1, limit: number = 5, search: string = '') {
-        const from = (page - 1) * limit;
-        const to = from + limit - 1;
+    async obtenerTodos(page?: number, limit?: number, search = '') {
+        const { page: pagina, limit: tamano } = acotarPaginacionClientes(page, limit);
+        const termino = sanitizarBusquedaCliente(search);
+        const from = (pagina - 1) * tamano;
+        const to = from + tamano - 1;
         const supabase = this.supabaseService.getClient();
 
         let query = supabase
             .from('clientes')
             .select('*', { count: 'exact' });
 
-        if (search) {
-            query = query.or(`cedula_ruc.ilike.%${search}%,nombres.ilike.%${search}%,apellidos.ilike.%${search}%`);
+        if (termino) {
+            query = query.or(`cedula_ruc.ilike.%${termino}%,nombres.ilike.%${termino}%,apellidos.ilike.%${termino}%`);
         }
 
         const { data, count, error } = await query
@@ -29,9 +32,9 @@ export class ClientesService {
             data,
             meta: {
                 total: count,
-                page,
-                limit,
-                totalPages: Math.ceil((count || 0) / limit)
+                page: pagina,
+                limit: tamano,
+                totalPages: Math.ceil((count || 0) / tamano)
             }
         };
     }
