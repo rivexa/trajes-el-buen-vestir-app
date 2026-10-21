@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query, DefaultValuePipe, ParseIntPipe } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, DefaultValuePipe, ParseIntPipe, ParseUUIDPipe } from '@nestjs/common';
 import { CLIENTES_LIMITE_POR_DEFECTO, CLIENTES_PAGINA_MINIMA } from './clientes.consulta';
 import { ClientesService } from './clientes.service';
 import { CreateClienteDto, UpdateClienteDto } from './dto/cliente.dto';
@@ -27,12 +27,12 @@ export class ClientesController {
     }
 
     @Patch(':id')
-    async actualizar(@Param('id') id: string, @Body() cliente: UpdateClienteDto) {
+    async actualizar(@Param('id', ParseUUIDPipe) id: string, @Body() cliente: UpdateClienteDto) {
         return this.clientesService.actualizar(id, cliente);
     }
 
     @Delete(':id')
-    async eliminar(@Param('id') id: string) {
+    async eliminar(@Param('id', ParseUUIDPipe) id: string) {
         return this.clientesService.eliminar(id);
     }
 }
