@@ -1,41 +1,113 @@
-import { IsUUID, IsOptional, IsNumber, IsString, IsDateString, IsArray, ValidateNested, Min } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
+import {
+    ArrayMaxSize,
+    ArrayMinSize,
+    IsArray,
+    IsDateString,
+    IsInt,
+    IsNotEmpty,
+    IsNumber,
+    IsOptional,
+    IsString,
+    IsUrl,
+    IsUUID,
+    MaxLength,
+    Min,
+    Validate,
+    ValidateNested,
+    ValidationArguments,
+    ValidatorConstraint,
+    ValidatorConstraintInterface,
+} from 'class-validator';
 
-class DetalleOrdenDto {
+function recortarTexto(value: unknown): unknown {
+    return typeof value === 'string' ? value.trim() : value;
+}
+
+function recortarOpcional(value: unknown): unknown {
+    if (typeof value !== 'string') return value;
+    const recortado = value.trim();
+    return recortado === '' ? undefined : recortado;
+}
+
+@ValidatorConstraint({ name: 'abonoNoSuperaSubtotal', async: false })
+export class AbonoNoSuperaSubtotal implements ValidatorConstraintInterface {
+    validate(abono: number, args: ValidationArguments) {
+        const orden = args.object as CreateOrdenDto;
+        if (!Array.isArray(orden.detalles) || abono == null) return true;
+        const subtotal = orden.detalles.reduce((suma, item) => {
+            const cantidad = Number(item.cantidad);
+            const precio = Number(item.precio_unitario);
+            if (!Number.isFinite(cantidad) || !Number.isFinite(precio)) return suma;
+            return suma + cantidad * precio;
+        }, 0);
+        return abono <= Number(subtotal.toFixed(2));
+    }
+
+    defaultMessage() {
+        return 'El abono no puede ser mayor que el subtotal de la orden.';
+    }
+}
+
+export class OrdenDetalleDto {
+    @Transform(({ value }) => recortarTexto(value))
     @IsString()
+    @IsNotEmpty({ message: 'El tipo de ítem es obligatorio.' })
+    @MaxLength(40, { message: 'El tipo de ítem no puede superar los 40 caracteres.' })
     tipo_item: string;
 
+    @Transform(({ value }) => recortarTexto(value))
     @IsString()
+    @IsNotEmpty({ message: 'La descripción es obligatoria.' })
+    @MaxLength(200, { message: 'La descripción no puede superar los 200 caracteres.' })
     descripcion: string;
 
-    @IsOptional()
-    @IsString()
-    imagen_referencia_url?: string;
-
-    @IsNumber()
-    @Min(1)
+    @Type(() => Number)
+    @IsInt({ message: 'La cantidad debe ser un número entero.' })
+    @Min(1, { message: 'La cantidad debe ser al menos 1.' })
     cantidad: number;
 
-    @IsNumber()
-    @Min(0)
+    @Type(() => Number)
+    @IsNumber({ maxDecimalPlaces: 2 }, { message: 'El precio unitario no puede tener más de 2 decimales.' })
+    @Min(0, { message: 'El precio unitario no puede ser negativo.' })
     precio_unitario: number;
+
+    @Transform(({ value }) => recortarOpcional(value))
+    @IsOptional()
+    @IsUrl(
+        { protocols: ['http', 'https'], require_protocol: true },
+        { message: 'La imagen de referencia debe ser una URL http o https.' },
+    )
+    imagen_referencia_url?: string;
 }
 
 export class CreateOrdenDto {
-    @IsUUID()
+    @IsUUID(undefined, { message: 'El cliente_id debe ser un UUID válido.' })
     cliente_id: string;
 
+    @Transform(({ value }) => recortarOpcional(value))
     @IsOptional()
-    @IsDateString()
+    @IsDateString({}, { message: 'La fecha de entrega estimada no es válida.' })
     fecha_entrega_estimada?: string;
 
+    @Type(() => Number)
     @IsOptional()
-    @IsNumber()
-    @Min(0)
+    @IsNumber({ maxDecimalPlaces: 2 }, { message: 'El abono no puede tener más de 2 decimales.' })
+    @Min(0, { message: 'El abono no puede ser negativo.' })
+    @Validate(AbonoNoSuperaSubtotal)
     abono?: number;
 
-    @IsArray()
+    @IsArray({ message: 'Los detalles deben enviarse en una lista.' })
+    @ArrayMinSize(1, { message: 'La orden debe incluir al menos un detalle.' })
+    @ArrayMaxSize(50, { message: 'La orden no puede tener más de 50 detalles.' })
     @ValidateNested({ each: true })
-    @Type(() => DetalleOrdenDto)
-    detalles: DetalleOrdenDto[];
+    @Type(() => OrdenDetalleDto)
+    detalles: OrdenDetalleDto[];
+}
+
+export class RegistrarPagoDto {
+    @Type(() => Number)
+    @IsNumber({ maxDecimalPlaces: 2 }, { message: 'El monto no puede tener más de 2 decimales.' })
+    @Min(0.01, { message: 'El monto del pago debe ser mayor a 0.' })
+    monto: number;
 }

@@ -1,6 +1,6 @@
 import { Controller, Post, Body, Get, Param, Patch, Delete, Query } from '@nestjs/common';
+import { CreateOrdenDto, RegistrarPagoDto } from './dto/orden.dto';
 import { OrdenesService } from './ordenes.service';
-import { CreateOrdenDto } from './dto/orden.dto';
 
 @Controller('ordenes')
 export class OrdenesController {
@@ -10,19 +10,19 @@ export class OrdenesController {
     async obtenerTodas(
         @Query('page') page: string,
         @Query('limit') limit: string,
-        @Query('search') search: string
+        @Query('search') search: string,
     ) {
-        return await this.ordenesService.obtenerTodos(Number(page) || 1, Number(limit) || 10, search);
+        return this.ordenesService.obtenerTodos(Number(page) || 1, Number(limit) || 10, search);
     }
 
     @Post('nueva')
-    async registrarOrden(@Body() body: CreateOrdenDto) {
-        return await this.ordenesService.crearOrden(body);
+    async crearOrden(@Body() body: CreateOrdenDto) {
+        return this.ordenesService.crearOrden(body);
     }
 
     @Get(':id')
     async obtenerOrdenCompleta(@Param('id') id: string) {
-        return await this.ordenesService.obtenerOrden(id);
+        return this.ordenesService.obtenerOrden(id);
     }
 
     @Patch(':id/editar')
@@ -30,7 +30,7 @@ export class OrdenesController {
         @Param('id') id: string,
         @Body() body: CreateOrdenDto,
     ) {
-        return await this.ordenesService.actualizarOrden(id, body);
+        return this.ordenesService.actualizarOrden(id, body);
     }
 
     @Patch(':id/estado')
@@ -38,19 +38,16 @@ export class OrdenesController {
         @Param('id') id: string,
         @Body('estado') estado: string,
     ) {
-        return await this.ordenesService.actualizarEstado(id, estado);
+        return this.ordenesService.actualizarEstado(id, estado);
     }
 
     @Patch(':id/pago')
-    async registrarNuevoPago(
-        @Param('id') id: string,
-        @Body('monto') monto: number,
-    ) {
-        return await this.ordenesService.registrarPago(id, monto);
+    async registrarPago(@Param('id') id: string, @Body() body: RegistrarPagoDto) {
+        return this.ordenesService.registrarPago(id, body.monto);
     }
 
     @Delete(':id')
     async anularOrden(@Param('id') id: string) {
-        return await this.ordenesService.eliminarOrden(id);
+        return this.ordenesService.eliminarOrden(id);
     }
 }

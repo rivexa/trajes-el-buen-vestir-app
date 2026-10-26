@@ -53,13 +53,11 @@ export class OrdenesService {
         const supabase = this.supabaseService.getClient();
         const { cliente_id, fecha_entrega_estimada, abono = 0, detalles } = ordenData;
 
-        // Calcular subtotal de la orden
         const subtotalCalculado = detalles.reduce(
             (suma, item) => suma + (item.cantidad * item.precio_unitario),
             0,
         );
 
-        // Insertar la Cabecera de la Orden
         const { data: orden, error: ordenError } = await supabase
             .from('ordenes_pedido')
             .insert([{
@@ -203,15 +201,12 @@ export class OrdenesService {
             throw new NotFoundException('Orden no encontrada para registrar pago.');
         }
 
-        // Validar que no pague más de lo que debe
         if (nuevoPago > ordenActual.saldo) {
             throw new InternalServerErrorException(`El pago ($${nuevoPago}) supera el saldo pendiente ($${ordenActual.saldo}).`);
         }
 
-        // Calcular el nuevo abono acumulado
         const abonoAcumulado = ordenActual.abono + nuevoPago;
 
-        // Actualizar la orden en la base de datos
         const { data: ordenActualizada, error: errorUpdate } = await supabase
             .from('ordenes_pedido')
             .update({ abono: abonoAcumulado })
