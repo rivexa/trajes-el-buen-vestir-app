@@ -1,6 +1,7 @@
 import * as forge from 'node-forge';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import { Crypto } from '@peculiar/webcrypto';
 import * as xadesjs from 'xadesjs';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
@@ -17,11 +18,20 @@ export class FirmaHelper {
 
     public static async firmarXML(xmlCrudo: string, p12Password: string): Promise<string> {
         try {
-            // Ubicar el archivo .p12
-            const certPath = path.resolve(process.cwd(), 'src/config/certs/firma.p12');
+            let certPath = path.resolve(process.cwd(), 'src/config/certs/firma.p12');
 
+            if (!fs.existsSync(certPath) && process.env.SRI_CERT_BASE64) {
+                certPath = path.join(os.tmpdir(), 'firma.p12');
+                
+                if (!fs.existsSync(certPath)) {
+                    const certBuffer = Buffer.from(process.env.SRI_CERT_BASE64, 'base64');
+                    fs.writeFileSync(certPath, certBuffer);
+                }
+            }
+
+            // 3. Verificación final de seguridad
             if (!fs.existsSync(certPath)) {
-                throw new Error(`No se encontró el archivo de firma electrónica en: ${certPath}`);
+                throw new Error(`No se encontró el archivo de firma electrónica en la ruta local ni en las variables de entorno.`);
             }
 
             // Leer y parsear el archivo .p12
