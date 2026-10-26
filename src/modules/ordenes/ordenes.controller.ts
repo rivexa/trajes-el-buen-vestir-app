@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, Param, Patch, Delete, Query } from '@nestjs/common';
+import { Controller, Post, Body, Get, Param, Patch, Delete, Query, ParseUUIDPipe } from '@nestjs/common';
 import { CreateOrdenDto, RegistrarPagoDto } from './dto/orden.dto';
 import { OrdenesService } from './ordenes.service';
 
@@ -21,13 +21,13 @@ export class OrdenesController {
     }
 
     @Get(':id')
-    async obtenerOrdenCompleta(@Param('id') id: string) {
+    async obtenerOrdenCompleta(@Param('id', ParseUUIDPipe) id: string) {
         return this.ordenesService.obtenerOrden(id);
     }
 
     @Patch(':id/editar')
     async modificarOrden(
-        @Param('id') id: string,
+        @Param('id', ParseUUIDPipe) id: string,
         @Body() body: CreateOrdenDto,
     ) {
         return this.ordenesService.actualizarOrden(id, body);
@@ -35,19 +35,19 @@ export class OrdenesController {
 
     @Patch(':id/estado')
     async cambiarEstadoOrden(
-        @Param('id') id: string,
+        @Param('id', ParseUUIDPipe) id: string,
         @Body('estado') estado: string,
     ) {
         return this.ordenesService.actualizarEstado(id, estado);
     }
 
     @Patch(':id/pago')
-    async registrarPago(@Param('id') id: string, @Body() body: RegistrarPagoDto) {
+    async registrarPago(@Param('id', ParseUUIDPipe) id: string, @Body() body: RegistrarPagoDto) {
         return this.ordenesService.registrarPago(id, body.monto);
     }
 
     @Delete(':id')
-    async anularOrden(@Param('id') id: string) {
+    async anularOrden(@Param('id', ParseUUIDPipe) id: string) {
         return this.ordenesService.eliminarOrden(id);
     }
 }
