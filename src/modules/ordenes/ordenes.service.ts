@@ -1,22 +1,12 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { SupabaseService } from '../../config/supabase.service';
+import { CreateOrdenDto } from './dto/orden.dto';
 
 @Injectable()
 export class OrdenesService {
     constructor(private readonly supabaseService: SupabaseService) { }
 
-    async crearOrden(ordenData: {
-        cliente_id: string;
-        fecha_entrega_estimada?: string;
-        abono?: number;
-        detalles: Array<{
-            tipo_item: string;
-            descripcion: string;
-            cantidad: number;
-            precio_unitario: number;
-            imagen_referencia_url?: string;
-        }>;
-    }) {
+    async crearOrden(ordenData: CreateOrdenDto) {
         const supabase = this.supabaseService.getClient();
         const { cliente_id, fecha_entrega_estimada, abono = 0, detalles } = ordenData;
 
