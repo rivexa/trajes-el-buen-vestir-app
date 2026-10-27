@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { SupabaseService } from '../../config/supabase.service';
 import { CreateOrdenDto } from './dto/orden.dto';
+import { redondearDinero, subtotalDetalles } from './ordenes.dinero';
 
 @Injectable()
 export class OrdenesService {
@@ -52,11 +53,8 @@ export class OrdenesService {
     async crearOrden(ordenData: CreateOrdenDto) {
         const supabase = this.supabaseService.getClient();
         const { cliente_id, fecha_entrega_estimada, abono = 0, detalles } = ordenData;
-
-        const subtotalCalculado = detalles.reduce(
-            (suma, item) => suma + (item.cantidad * item.precio_unitario),
-            0,
-        );
+        const subtotalCalculado = subtotalDetalles(detalles);
+        const abonoInicial = redondearDinero(abono);
 
         const { data: orden, error: ordenError } = await supabase
             .from('ordenes_pedido')
@@ -64,7 +62,7 @@ export class OrdenesService {
                 cliente_id,
                 fecha_entrega_estimada,
                 subtotal: subtotalCalculado,
-                abono: abono || 0,
+                abono: abonoInicial,
                 estado: 'Pendiente'
             }])
             .select()
@@ -82,7 +80,7 @@ export class OrdenesService {
             tipo_item: item.tipo_item,
             descripcion: item.descripcion,
             cantidad: item.cantidad,
-            precio_unitario: item.precio_unitario,
+            precio_unitario: redondearDinero(item.precio_unitario),
             imagen_referencia_url: item.imagen_referencia_url,
         }));
 
@@ -91,7 +89,10 @@ export class OrdenesService {
             .insert(detallesParaInsertar);
 
         if (detallesError) {
-            await supabase.from('ordenes_pedido').delete().eq('id', orden.id);
+            const { error: rollbackError } = await supabase.from('ordenes_pedido').delete().eq('id', orden.id);
+            if (rollbackError) {
+                this.logger.error(`No se pudo revertir la cabecera ${orden.id} [${rollbackError.code}] ${rollbackError.message}`);
+            }
             this.falloPersistencia(detallesError, 'No se pudieron registrar los detalles de la orden.');
         }
 
@@ -123,18 +124,14 @@ export class OrdenesService {
 
     async actualizarOrden(id: string, ordenData: CreateOrdenDto) {
         const supabase = this.supabaseService.getClient();
-        const { fecha_entrega_estimada, abono, detalles } = ordenData;
-
-        const subtotalCalculado = detalles.reduce(
-            (suma, item) => suma + (item.cantidad * item.precio_unitario),
-            0,
-        );
+        const { fecha_entrega_estimada, abono = 0, detalles } = ordenData;
+        const subtotalCalculado = subtotalDetalles(detalles);
 
         const { data: cabecera, error: cabeceraError } = await supabase
             .from('ordenes_pedido')
             .update({
                 fecha_entrega_estimada,
-                abono: abono || 0,
+                abono: redondearDinero(abono),
                 subtotal: subtotalCalculado
             })
             .eq('id', id)
@@ -158,7 +155,7 @@ export class OrdenesService {
             tipo_item: item.tipo_item,
             descripcion: item.descripcion,
             cantidad: item.cantidad,
-            precio_unitario: item.precio_unitario,
+            precio_unitario: redondearDinero(item.precio_unitario),
             imagen_referencia_url: item.imagen_referencia_url,
         }));
 
@@ -223,20 +220,31 @@ export class OrdenesService {
             throw new NotFoundException('Orden no encontrada.');
         }
 
-        if (nuevoPago > ordenActual.saldo) {
+        const pago = redondearDinero(nuevoPago);
+        const saldo = redondearDinero(Number(ordenActual.saldo));
+        if (pago > saldo) {
             throw new BadRequestException('El pago supera el saldo pendiente.');
         }
 
-        const abonoAcumulado = ordenActual.abono + nuevoPago;
+        const abonoAcumulado = redondearDinero(Number(ordenActual.abono) + pago);
 
         const { data: ordenActualizada, error: errorUpdate } = await supabase
             .from('ordenes_pedido')
             .update({ abono: abonoAcumulado })
             .eq('id', id)
+            .eq('abono', ordenActual.abono)
             .select()
             .single();
 
-        if (errorUpdate) this.falloPersistencia(errorUpdate, 'No se pudo registrar el pago.');
+        if (errorUpdate) {
+            if (errorUpdate.code === 'PGRST116') {
+                throw new ConflictException('El abono de la orden cambió. Vuelva a intentar el pago.');
+            }
+            this.falloPersistencia(errorUpdate, 'No se pudo registrar el pago.');
+        }
+        if (!ordenActualizada) {
+            throw new ConflictException('El abono de la orden cambió. Vuelva a intentar el pago.');
+        }
 
         return {
             mensaje: 'Pago registrado exitosamente',

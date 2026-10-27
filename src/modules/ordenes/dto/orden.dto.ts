@@ -1,4 +1,5 @@
 import { Transform, Type } from 'class-transformer';
+import { subtotalDetalles } from '../ordenes.dinero';
 import {
     ArrayMaxSize,
     ArrayMinSize,
@@ -35,13 +36,13 @@ export class AbonoNoSuperaSubtotal implements ValidatorConstraintInterface {
     validate(abono: number, args: ValidationArguments) {
         const orden = args.object as CreateOrdenDto;
         if (!Array.isArray(orden.detalles) || abono == null) return true;
-        const subtotal = orden.detalles.reduce((suma, item) => {
-            const cantidad = Number(item.cantidad);
-            const precio = Number(item.precio_unitario);
-            if (!Number.isFinite(cantidad) || !Number.isFinite(precio)) return suma;
-            return suma + cantidad * precio;
-        }, 0);
-        return abono <= Number(subtotal.toFixed(2));
+        const lineas = orden.detalles
+            .map((item) => ({
+                cantidad: Number(item.cantidad),
+                precio_unitario: Number(item.precio_unitario),
+            }))
+            .filter((item) => Number.isFinite(item.cantidad) && Number.isFinite(item.precio_unitario));
+        return abono <= subtotalDetalles(lineas);
     }
 
     defaultMessage() {
