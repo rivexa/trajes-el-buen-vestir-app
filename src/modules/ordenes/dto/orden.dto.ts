@@ -5,6 +5,7 @@ import {
     ArrayMinSize,
     IsArray,
     IsDateString,
+    IsIn,
     IsInt,
     IsNotEmpty,
     IsNumber,
@@ -111,4 +112,25 @@ export class RegistrarPagoDto {
     @IsNumber({ maxDecimalPlaces: 2 }, { message: 'El monto no puede tener más de 2 decimales.' })
     @Min(0.01, { message: 'El monto del pago debe ser mayor a 0.' })
     monto: number;
+}
+
+export const ESTADOS_PRODUCCION = [
+    'Pendiente',
+    'En Confección',
+    'Listo para Prueba',
+    'Entregado',
+] as const;
+
+export type EstadoProduccion = (typeof ESTADOS_PRODUCCION)[number];
+
+export function esEstadoProduccion(valor: string): valor is EstadoProduccion {
+    return (ESTADOS_PRODUCCION as readonly string[]).includes(valor);
+}
+
+export class ActualizarEstadoOrdenDto {
+    @Transform(({ value }) => recortarTexto(value))
+    @IsIn([...ESTADOS_PRODUCCION], {
+        message: 'El estado proporcionado no es válido para el flujo de producción.',
+    })
+    estado: EstadoProduccion;
 }

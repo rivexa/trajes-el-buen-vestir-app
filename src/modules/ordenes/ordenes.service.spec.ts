@@ -115,4 +115,55 @@ describe('OrdenesService', () => {
 
         await expect(service.obtenerOrden(ORDEN_ID)).rejects.toBeInstanceOf(NotFoundException);
     });
+
+    it('sanitiza el search antes de interpolarlo en el filtro de clientes', async () => {
+        const consulta = consultaSupabase({ data: [], count: 0, error: null });
+        from.mockReturnValue(consulta);
+
+        await service.obtenerTodos(1, 10, 'juan,nombres.eq.hack');
+
+        expect(consulta.or).toHaveBeenCalledWith(
+            'nombres.ilike.%juannombres.eq.hack%,apellidos.ilike.%juannombres.eq.hack%',
+            { foreignTable: 'clientes' },
+        );
+    });
+
+    it('no aplica filtro cuando el search queda vacío al sanitizar', async () => {
+        const consulta = consultaSupabase({ data: [], count: 0, error: null });
+        from.mockReturnValue(consulta);
+
+        await service.obtenerTodos(1, 10, ',,,%%%');
+
+        expect(consulta.or).not.toHaveBeenCalled();
+        expect(consulta.eq).not.toHaveBeenCalled();
+    });
+
+    it('acota la paginación antes de consultar', async () => {
+        const consulta = consultaSupabase({ data: [], count: 0, error: null });
+        from.mockReturnValue(consulta);
+
+        const resultado = await service.obtenerTodos(-1, 100, '');
+
+        expect(consulta.range).toHaveBeenCalledWith(0, 49);
+        expect(resultado.meta).toEqual({
+            total: 0,
+            page: 1,
+            limit: 50,
+            totalPages: 0,
+        });
+    });
+
+    it('responde 400 si el estado no pertenece al flujo de producción', async () => {
+        await expect(service.actualizarEstado(ORDEN_ID, 'Facturada')).rejects.toBeInstanceOf(BadRequestException);
+        expect(from).not.toHaveBeenCalled();
+    });
+
+    it('responde 409 si se intenta cambiar el estado de una orden anulada', async () => {
+        from.mockReturnValue(consultaSupabase({
+            data: { id: ORDEN_ID, estado: 'Anulada' },
+            error: null,
+        }));
+
+        await expect(service.actualizarEstado(ORDEN_ID, 'Entregado')).rejects.toBeInstanceOf(ConflictException);
+    });
 });

@@ -1,8 +1,10 @@
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 import { OrdenesController } from './ordenes.controller';
 import { OrdenesService } from './ordenes.service';
+
+const ORDEN_ID = '11111111-1111-4111-8111-111111111111';
 
 describe('OrdenesController', () => {
     let app: INestApplication;
@@ -25,6 +27,11 @@ describe('OrdenesController', () => {
 
         controller = module.get(OrdenesController);
         app = module.createNestApplication();
+        app.useGlobalPipes(new ValidationPipe({
+            whitelist: true,
+            forbidNonWhitelisted: true,
+            transform: true,
+        }));
         await app.init();
         jest.clearAllMocks();
     });
@@ -56,5 +63,35 @@ describe('OrdenesController', () => {
     it('rechaza un id que no es UUID', async () => {
         await request(app.getHttpServer()).delete('/ordenes/abc').expect(400);
         expect(ordenesService.eliminarOrden).not.toHaveBeenCalled();
+    });
+
+    it('lista con página 1 y límite 10 si no hay query', async () => {
+        ordenesService.obtenerTodos.mockResolvedValue({ data: [], meta: {} });
+
+        await request(app.getHttpServer()).get('/ordenes').expect(200);
+        expect(ordenesService.obtenerTodos).toHaveBeenCalledWith(1, 10, '');
+    });
+
+    it('delega el cambio de estado al servicio', async () => {
+        ordenesService.actualizarEstado.mockResolvedValue({
+            mensaje: 'Estado actualizado correctamente',
+            estado_actual: 'Entregado',
+        });
+
+        await request(app.getHttpServer())
+            .patch(`/ordenes/${ORDEN_ID}/estado`)
+            .send({ estado: 'Entregado' })
+            .expect(200);
+
+        expect(ordenesService.actualizarEstado).toHaveBeenCalledWith(ORDEN_ID, 'Entregado');
+    });
+
+    it('rechaza un estado fuera del flujo de producción', async () => {
+        await request(app.getHttpServer())
+            .patch(`/ordenes/${ORDEN_ID}/estado`)
+            .send({ estado: 'Facturada' })
+            .expect(400);
+
+        expect(ordenesService.actualizarEstado).not.toHaveBeenCalled();
     });
 });

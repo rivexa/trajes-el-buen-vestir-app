@@ -1,5 +1,6 @@
-import { Controller, Post, Body, Get, Param, Patch, Delete, Query, ParseUUIDPipe } from '@nestjs/common';
-import { CreateOrdenDto, RegistrarPagoDto } from './dto/orden.dto';
+import { Controller, Post, Body, Get, Param, Patch, Delete, Query, DefaultValuePipe, ParseIntPipe, ParseUUIDPipe } from '@nestjs/common';
+import { ActualizarEstadoOrdenDto, CreateOrdenDto, RegistrarPagoDto } from './dto/orden.dto';
+import { ORDENES_LIMITE_POR_DEFECTO, ORDENES_PAGINA_MINIMA } from './ordenes.consulta';
 import { OrdenesService } from './ordenes.service';
 
 @Controller('ordenes')
@@ -8,11 +9,11 @@ export class OrdenesController {
 
     @Get()
     async obtenerTodas(
-        @Query('page') page: string,
-        @Query('limit') limit: string,
-        @Query('search') search: string,
+        @Query('page', new DefaultValuePipe(ORDENES_PAGINA_MINIMA), ParseIntPipe) page: number,
+        @Query('limit', new DefaultValuePipe(ORDENES_LIMITE_POR_DEFECTO), ParseIntPipe) limit: number,
+        @Query('search') search?: string,
     ) {
-        return this.ordenesService.obtenerTodos(Number(page) || 1, Number(limit) || 10, search);
+        return this.ordenesService.obtenerTodos(page, limit, search ?? '');
     }
 
     @Post('nueva')
@@ -36,9 +37,9 @@ export class OrdenesController {
     @Patch(':id/estado')
     async cambiarEstadoOrden(
         @Param('id', ParseUUIDPipe) id: string,
-        @Body('estado') estado: string,
+        @Body() body: ActualizarEstadoOrdenDto,
     ) {
-        return this.ordenesService.actualizarEstado(id, estado);
+        return this.ordenesService.actualizarEstado(id, body.estado);
     }
 
     @Patch(':id/pago')

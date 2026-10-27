@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { SupabaseService } from '../../config/supabase.service';
-import { CreateOrdenDto } from './dto/orden.dto';
+import { CreateOrdenDto, esEstadoProduccion } from './dto/orden.dto';
+import { acotarPaginacionOrdenes, sanitizarBusquedaOrden } from './ordenes.consulta';
 import { redondearDinero, subtotalDetalles } from './ordenes.dinero';
 
 @Injectable()
@@ -9,27 +10,32 @@ export class OrdenesService {
 
     constructor(private readonly supabaseService: SupabaseService) { }
 
-    async obtenerTodos(page: number = 1, limit: number = 10, search?: string) {
+    async obtenerTodos(page?: number, limit?: number, search = '') {
+        const { page: pagina, limit: tamano } = acotarPaginacionOrdenes(page, limit);
+        const termino = sanitizarBusquedaOrden(search);
+        const from = (pagina - 1) * tamano;
+        const to = from + tamano - 1;
         const supabase = this.supabaseService.getClient();
-        const from = (page - 1) * limit;
-        const to = from + limit - 1;
 
         let query = supabase
             .from('ordenes_pedido')
             .select('*, clientes!inner(nombres, apellidos, cedula_ruc)', { count: 'exact' });
 
-        if (search) {
-            const cleanSearch = search.replace(/^ord-?/i, '');
-            const isNumeric = /^\d+$/.test(cleanSearch);
+        if (termino) {
+            const numeroOrden = termino.replace(/^ord-?/i, '');
+            const isNumeric = /^\d+$/.test(numeroOrden);
 
             if (isNumeric) {
-                if (cleanSearch.length >= 10) {
-                    query = query.eq('clientes.cedula_ruc', cleanSearch);
+                if (numeroOrden.length >= 10) {
+                    query = query.eq('clientes.cedula_ruc', numeroOrden);
                 } else {
-                    query = query.eq('numero_orden', parseInt(cleanSearch, 10));
+                    query = query.eq('numero_orden', parseInt(numeroOrden, 10));
                 }
             } else {
-                query = query.or(`nombres.ilike.%${cleanSearch}%,apellidos.ilike.%${cleanSearch}%`, { foreignTable: 'clientes' });
+                query = query.or(
+                    `nombres.ilike.%${termino}%,apellidos.ilike.%${termino}%`,
+                    { foreignTable: 'clientes' },
+                );
             }
         }
 
@@ -43,9 +49,9 @@ export class OrdenesService {
             data,
             meta: {
                 total: count,
-                page,
-                limit,
-                totalPages: Math.ceil((count || 0) / limit)
+                page: pagina,
+                limit: tamano,
+                totalPages: Math.ceil((count || 0) / tamano)
             }
         };
     }
@@ -255,11 +261,26 @@ export class OrdenesService {
     }
 
     async actualizarEstado(id: string, nuevoEstado: string) {
+        if (!esEstadoProduccion(nuevoEstado)) {
+            throw new BadRequestException('El estado proporcionado no es válido para el flujo de producción.');
+        }
+
         const supabase = this.supabaseService.getClient();
 
-        const estadosValidos = ['Pendiente', 'En Confección', 'Listo para Prueba', 'Entregado', 'Anulada'];
-        if (!estadosValidos.includes(nuevoEstado)) {
-            throw new BadRequestException('El estado proporcionado no es válido para el flujo de producción.');
+        const { data: orden, error: errorBusqueda } = await supabase
+            .from('ordenes_pedido')
+            .select('id, estado')
+            .eq('id', id)
+            .single();
+
+        if (errorBusqueda && errorBusqueda.code !== 'PGRST116') {
+            this.falloPersistencia(errorBusqueda, 'No se pudo consultar la orden.');
+        }
+        if (errorBusqueda || !orden) {
+            throw new NotFoundException('Orden no encontrada.');
+        }
+        if (orden.estado === 'Anulada') {
+            throw new ConflictException('No se puede cambiar el estado de una orden anulada.');
         }
 
         const { data, error } = await supabase

@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { CreateOrdenDto, RegistrarPagoDto } from './orden.dto';
+import { ActualizarEstadoOrdenDto, CreateOrdenDto, RegistrarPagoDto } from './orden.dto';
 
 const detalleValido = {
     tipo_item: 'Traje',
@@ -78,5 +78,22 @@ describe('RegistrarPagoDto', () => {
         const dto = plainToInstance(RegistrarPagoDto, { monto: 0 });
         const errors = await validate(dto);
         expect(errors.some((error) => error.property === 'monto')).toBe(true);
+    });
+});
+
+describe('ActualizarEstadoOrdenDto', () => {
+    it('acepta un estado de producción y recorta espacios', async () => {
+        const dto = plainToInstance(ActualizarEstadoOrdenDto, { estado: '  Entregado  ' });
+        const errors = await validate(dto);
+        expect(errors).toHaveLength(0);
+        expect(dto.estado).toBe('Entregado');
+    });
+
+    it('rechaza Anulada y Facturada en el flujo de producción', async () => {
+        for (const estado of ['Anulada', 'Facturada', 'En Proceso']) {
+            const dto = plainToInstance(ActualizarEstadoOrdenDto, { estado });
+            const errors = await validate(dto);
+            expect(errors.some((error) => error.property === 'estado')).toBe(true);
+        }
     });
 });
