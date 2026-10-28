@@ -1,9 +1,12 @@
-import { Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { SupabaseService } from '../../config/supabase.service';
 import { CreateOrdenDto } from './dto/orden.dto';
+import { redondearDinero, subtotalDetalles } from './ordenes.dinero';
 
 @Injectable()
 export class OrdenesService {
+    private readonly logger = new Logger(OrdenesService.name);
+
     constructor(private readonly supabaseService: SupabaseService) { }
 
     async obtenerTodos(page: number = 1, limit: number = 10, search?: string) {
@@ -34,9 +37,7 @@ export class OrdenesService {
             .order('fecha_creacion', { ascending: false })
             .range(from, to);
 
-        if (error) {
-            throw new InternalServerErrorException('Error al consultar el historial de órdenes.');
-        }
+        if (error) this.falloPersistencia(error, 'No se pudo listar las órdenes.');
 
         return {
             data,
@@ -52,11 +53,8 @@ export class OrdenesService {
     async crearOrden(ordenData: CreateOrdenDto) {
         const supabase = this.supabaseService.getClient();
         const { cliente_id, fecha_entrega_estimada, abono = 0, detalles } = ordenData;
-
-        const subtotalCalculado = detalles.reduce(
-            (suma, item) => suma + (item.cantidad * item.precio_unitario),
-            0,
-        );
+        const subtotalCalculado = subtotalDetalles(detalles);
+        const abonoInicial = redondearDinero(abono);
 
         const { data: orden, error: ordenError } = await supabase
             .from('ordenes_pedido')
@@ -64,20 +62,25 @@ export class OrdenesService {
                 cliente_id,
                 fecha_entrega_estimada,
                 subtotal: subtotalCalculado,
-                abono: abono || 0,
+                abono: abonoInicial,
                 estado: 'Pendiente'
             }])
             .select()
             .single();
 
-        if (ordenError) throw new InternalServerErrorException(`Error al crear orden: ${ordenError.message}`);
+        if (ordenError) {
+            if (ordenError.code === '23503') {
+                throw new NotFoundException('No se encontró el cliente indicado.');
+            }
+            this.falloPersistencia(ordenError, 'No se pudo registrar la orden.');
+        }
 
         const detallesParaInsertar = detalles.map((item) => ({
             orden_id: orden.id,
             tipo_item: item.tipo_item,
             descripcion: item.descripcion,
             cantidad: item.cantidad,
-            precio_unitario: item.precio_unitario,
+            precio_unitario: redondearDinero(item.precio_unitario),
             imagen_referencia_url: item.imagen_referencia_url,
         }));
 
@@ -86,8 +89,11 @@ export class OrdenesService {
             .insert(detallesParaInsertar);
 
         if (detallesError) {
-            await supabase.from('ordenes_pedido').delete().eq('id', orden.id);
-            throw new InternalServerErrorException('Error al insertar los detalles. Orden revertida por seguridad.');
+            const { error: rollbackError } = await supabase.from('ordenes_pedido').delete().eq('id', orden.id);
+            if (rollbackError) {
+                this.logger.error(`No se pudo revertir la cabecera ${orden.id} [${rollbackError.code}] ${rollbackError.message}`);
+            }
+            this.falloPersistencia(detallesError, 'No se pudieron registrar los detalles de la orden.');
         }
 
         return orden;
@@ -106,8 +112,11 @@ export class OrdenesService {
             .eq('id', id)
             .single();
 
+        if (error && error.code !== 'PGRST116') {
+            this.falloPersistencia(error, 'No se pudo consultar la orden.');
+        }
         if (error || !data) {
-            throw new NotFoundException(`No se encontró la orden o hubo un error: ${error?.message}`);
+            throw new NotFoundException('Orden no encontrada.');
         }
 
         return data;
@@ -115,23 +124,29 @@ export class OrdenesService {
 
     async actualizarOrden(id: string, ordenData: CreateOrdenDto) {
         const supabase = this.supabaseService.getClient();
-        const { fecha_entrega_estimada, abono, detalles } = ordenData;
+        const { fecha_entrega_estimada, abono = 0, detalles } = ordenData;
+        const subtotalCalculado = subtotalDetalles(detalles);
 
-        const subtotalCalculado = detalles.reduce(
-            (suma, item) => suma + (item.cantidad * item.precio_unitario),
-            0,
-        );
-
-        const { error: cabeceraError } = await supabase
+        const { data: cabecera, error: cabeceraError } = await supabase
             .from('ordenes_pedido')
             .update({
                 fecha_entrega_estimada,
-                abono: abono || 0,
+                abono: redondearDinero(abono),
                 subtotal: subtotalCalculado
             })
-            .eq('id', id);
+            .eq('id', id)
+            .select('id')
+            .single();
 
-        if (cabeceraError) throw new InternalServerErrorException('Error al actualizar la cabecera de la orden.');
+        if (cabeceraError) {
+            if (cabeceraError.code === 'PGRST116') {
+                throw new NotFoundException('Orden no encontrada.');
+            }
+            this.falloPersistencia(cabeceraError, 'No se pudo actualizar la orden.');
+        }
+        if (!cabecera) {
+            throw new NotFoundException('Orden no encontrada.');
+        }
 
         await supabase.from('orden_detalles').delete().eq('orden_id', id);
 
@@ -140,13 +155,13 @@ export class OrdenesService {
             tipo_item: item.tipo_item,
             descripcion: item.descripcion,
             cantidad: item.cantidad,
-            precio_unitario: item.precio_unitario,
+            precio_unitario: redondearDinero(item.precio_unitario),
             imagen_referencia_url: item.imagen_referencia_url,
         }));
 
         const { error: detallesError } = await supabase.from('orden_detalles').insert(detallesParaInsertar);
 
-        if (detallesError) throw new InternalServerErrorException('Error al actualizar los detalles de la orden.');
+        if (detallesError) this.falloPersistencia(detallesError, 'No se pudieron actualizar los detalles de la orden.');
 
         return { mensaje: 'Orden actualizada exitosamente' };
     }
@@ -160,16 +175,19 @@ export class OrdenesService {
             .eq('id', id)
             .single();
 
+        if (errorBusqueda && errorBusqueda.code !== 'PGRST116') {
+            this.falloPersistencia(errorBusqueda, 'No se pudo consultar la orden.');
+        }
         if (errorBusqueda || !orden) {
-            throw new NotFoundException('La orden no existe.');
+            throw new NotFoundException('Orden no encontrada.');
         }
 
         if (orden.estado === 'Anulada') {
-            throw new InternalServerErrorException('Esta orden ya se encuentra anulada.');
+            throw new ConflictException('Esta orden ya se encuentra anulada.');
         }
 
         if (orden.factura_id) {
-            throw new InternalServerErrorException('No se puede anular esta orden porque ya tiene una factura asociada.');
+            throw new ConflictException('No se puede anular esta orden porque ya tiene una factura asociada.');
         }
 
         const { error: errorUpdate } = await supabase
@@ -181,9 +199,7 @@ export class OrdenesService {
             })
             .eq('id', id);
 
-        if (errorUpdate) {
-            throw new InternalServerErrorException(`Error al anular la orden: ${errorUpdate.message}`);
-        }
+        if (errorUpdate) this.falloPersistencia(errorUpdate, 'No se pudo anular la orden.');
 
         return { mensaje: 'Orden anulada exitosamente' };
     }
@@ -197,25 +213,37 @@ export class OrdenesService {
             .eq('id', id)
             .single();
 
+        if (errorBusqueda && errorBusqueda.code !== 'PGRST116') {
+            this.falloPersistencia(errorBusqueda, 'No se pudo consultar la orden.');
+        }
         if (errorBusqueda || !ordenActual) {
-            throw new NotFoundException('Orden no encontrada para registrar pago.');
+            throw new NotFoundException('Orden no encontrada.');
         }
 
-        if (nuevoPago > ordenActual.saldo) {
-            throw new InternalServerErrorException(`El pago ($${nuevoPago}) supera el saldo pendiente ($${ordenActual.saldo}).`);
+        const pago = redondearDinero(nuevoPago);
+        const saldo = redondearDinero(Number(ordenActual.saldo));
+        if (pago > saldo) {
+            throw new BadRequestException('El pago supera el saldo pendiente.');
         }
 
-        const abonoAcumulado = ordenActual.abono + nuevoPago;
+        const abonoAcumulado = redondearDinero(Number(ordenActual.abono) + pago);
 
         const { data: ordenActualizada, error: errorUpdate } = await supabase
             .from('ordenes_pedido')
             .update({ abono: abonoAcumulado })
             .eq('id', id)
+            .eq('abono', ordenActual.abono)
             .select()
             .single();
 
         if (errorUpdate) {
-            throw new InternalServerErrorException('Error al actualizar el abono en la base de datos.');
+            if (errorUpdate.code === 'PGRST116') {
+                throw new ConflictException('El abono de la orden cambió. Vuelva a intentar el pago.');
+            }
+            this.falloPersistencia(errorUpdate, 'No se pudo registrar el pago.');
+        }
+        if (!ordenActualizada) {
+            throw new ConflictException('El abono de la orden cambió. Vuelva a intentar el pago.');
         }
 
         return {
@@ -231,7 +259,7 @@ export class OrdenesService {
 
         const estadosValidos = ['Pendiente', 'En Confección', 'Listo para Prueba', 'Entregado', 'Anulada'];
         if (!estadosValidos.includes(nuevoEstado)) {
-            throw new InternalServerErrorException('El estado proporcionado no es válido para el flujo de producción.');
+            throw new BadRequestException('El estado proporcionado no es válido para el flujo de producción.');
         }
 
         const { data, error } = await supabase
@@ -242,9 +270,20 @@ export class OrdenesService {
             .single();
 
         if (error) {
-            throw new InternalServerErrorException(`Error al actualizar el estado: ${error.message}`);
+            if (error.code === 'PGRST116') {
+                throw new NotFoundException('Orden no encontrada.');
+            }
+            this.falloPersistencia(error, 'No se pudo actualizar el estado.');
+        }
+        if (!data) {
+            throw new NotFoundException('Orden no encontrada.');
         }
 
         return { mensaje: 'Estado actualizado correctamente', estado_actual: data.estado };
+    }
+
+    private falloPersistencia(error: { code?: string; message?: string }, mensaje: string): never {
+        this.logger.error(`${mensaje} [${error.code ?? 'sin-codigo'}] ${error.message ?? ''}`);
+        throw new InternalServerErrorException(mensaje);
     }
 }
