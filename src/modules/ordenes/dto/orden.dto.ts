@@ -1,4 +1,5 @@
 import { Transform, Type } from 'class-transformer';
+import { OmitType } from '@nestjs/swagger';
 import { subtotalDetalles } from '../ordenes.dinero';
 import {
     ArrayMaxSize,
@@ -106,6 +107,8 @@ export class CreateOrdenDto {
     @Type(() => OrdenDetalleDto)
     detalles: OrdenDetalleDto[];
 }
+
+export class UpdateOrdenDto extends OmitType(CreateOrdenDto, ['cliente_id', 'abono'] as const) {}
 
 export class RegistrarPagoDto {
     @Type(() => Number)

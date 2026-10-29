@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { ActualizarEstadoOrdenDto, CreateOrdenDto, RegistrarPagoDto } from './orden.dto';
+import { ActualizarEstadoOrdenDto, CreateOrdenDto, RegistrarPagoDto, UpdateOrdenDto } from './orden.dto';
 
 const detalleValido = {
     tipo_item: 'Traje',
@@ -63,6 +63,23 @@ describe('CreateOrdenDto', () => {
             ...ordenValida,
             detalles: [{ ...detalleValido, imagen_referencia_url: 'javascript:alert(1)' }],
         });
+        expect(errors.some((error) => error.property === 'detalles')).toBe(true);
+    });
+});
+
+describe('UpdateOrdenDto', () => {
+    it('acepta detalles y fecha sin cliente_id ni abono', async () => {
+        const dto = plainToInstance(UpdateOrdenDto, {
+            fecha_entrega_estimada: '2026-11-01',
+            detalles: [detalleValido],
+        });
+        const errors = await validate(dto);
+        expect(errors).toHaveLength(0);
+    });
+
+    it('rechaza una edición sin detalles', async () => {
+        const dto = plainToInstance(UpdateOrdenDto, { detalles: [] });
+        const errors = await validate(dto);
         expect(errors.some((error) => error.property === 'detalles')).toBe(true);
     });
 });

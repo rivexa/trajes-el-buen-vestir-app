@@ -1,5 +1,5 @@
 import { Controller, Post, Body, Get, Param, Patch, Delete, Query, DefaultValuePipe, ParseIntPipe, ParseUUIDPipe } from '@nestjs/common';
-import { ActualizarEstadoOrdenDto, CreateOrdenDto, RegistrarPagoDto } from './dto/orden.dto';
+import { ActualizarEstadoOrdenDto, CreateOrdenDto, RegistrarPagoDto, UpdateOrdenDto } from './dto/orden.dto';
 import { ORDENES_LIMITE_POR_DEFECTO, ORDENES_PAGINA_MINIMA } from './ordenes.consulta';
 import { OrdenesService } from './ordenes.service';
 
@@ -29,7 +29,7 @@ export class OrdenesController {
     @Patch(':id/editar')
     async modificarOrden(
         @Param('id', ParseUUIDPipe) id: string,
-        @Body() body: CreateOrdenDto,
+        @Body() body: UpdateOrdenDto,
     ) {
         return this.ordenesService.actualizarOrden(id, body);
     }

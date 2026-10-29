@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { SupabaseService } from '../../config/supabase.service';
-import { CreateOrdenDto } from './dto/orden.dto';
+import { CreateOrdenDto, UpdateOrdenDto } from './dto/orden.dto';
 import { OrdenesService } from './ordenes.service';
 
 type ResultadoConsulta = {
@@ -37,6 +37,23 @@ const ordenNueva: CreateOrdenDto = {
         cantidad: 1,
         precio_unitario: 200,
     }],
+};
+
+const ordenEditada: UpdateOrdenDto = {
+    fecha_entrega_estimada: '2026-11-01',
+    detalles: [{
+        tipo_item: 'Traje',
+        descripcion: 'Traje de lino',
+        cantidad: 1,
+        precio_unitario: 200,
+    }],
+};
+
+const detalleGuardado = {
+    tipo_item: 'Saco',
+    descripcion: 'Saco anterior',
+    cantidad: 1,
+    precio_unitario: 150,
 };
 
 describe('OrdenesService', () => {
@@ -165,5 +182,110 @@ describe('OrdenesService', () => {
         }));
 
         await expect(service.actualizarEstado(ORDEN_ID, 'Entregado')).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('responde 409 si se intenta editar una orden anulada', async () => {
+        from.mockReturnValue(consultaSupabase({
+            data: {
+                id: ORDEN_ID,
+                estado: 'Anulada',
+                factura_id: null,
+                abono: 0,
+                orden_detalles: [],
+            },
+            error: null,
+        }));
+
+        await expect(service.actualizarOrden(ORDEN_ID, ordenEditada)).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('responde 409 si se intenta editar una orden facturada', async () => {
+        from.mockReturnValue(consultaSupabase({
+            data: {
+                id: ORDEN_ID,
+                estado: 'Pendiente',
+                factura_id: ORDEN_ID,
+                abono: 50,
+                orden_detalles: [detalleGuardado],
+            },
+            error: null,
+        }));
+
+        await expect(service.actualizarOrden(ORDEN_ID, ordenEditada)).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('responde 400 si el nuevo subtotal es menor que el abono acumulado', async () => {
+        from.mockReturnValue(consultaSupabase({
+            data: {
+                id: ORDEN_ID,
+                estado: 'Pendiente',
+                factura_id: null,
+                abono: 250,
+                orden_detalles: [detalleGuardado],
+            },
+            error: null,
+        }));
+
+        await expect(service.actualizarOrden(ORDEN_ID, ordenEditada)).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('restaura los detalles anteriores si el insert de la edición falla', async () => {
+        const cabecera = consultaSupabase({
+            data: {
+                id: ORDEN_ID,
+                estado: 'Pendiente',
+                factura_id: null,
+                abono: 50,
+                orden_detalles: [detalleGuardado],
+            },
+            error: null,
+        });
+        const detalles = consultaSupabase(
+            { data: null, error: null },
+            { data: null, error: { code: '23502', message: 'not null' } },
+            { data: null, error: null },
+        );
+        from.mockImplementation((tabla: string) => (
+            tabla === 'orden_detalles' ? detalles : cabecera
+        ));
+
+        await expect(service.actualizarOrden(ORDEN_ID, ordenEditada)).rejects.toBeInstanceOf(InternalServerErrorException);
+        expect(detalles.insert).toHaveBeenCalledTimes(2);
+        expect(detalles.insert).toHaveBeenNthCalledWith(2, [expect.objectContaining({
+            orden_id: ORDEN_ID,
+            descripcion: 'Saco anterior',
+        })]);
+        expect(cabecera.update).not.toHaveBeenCalled();
+    });
+
+    it('actualiza subtotal y fecha sin pisar el abono', async () => {
+        const cabecera = consultaSupabase(
+            {
+                data: {
+                    id: ORDEN_ID,
+                    estado: 'Pendiente',
+                    factura_id: null,
+                    abono: 50,
+                    orden_detalles: [detalleGuardado],
+                },
+                error: null,
+            },
+            { data: null, error: null },
+        );
+        const detalles = consultaSupabase(
+            { data: null, error: null },
+            { data: null, error: null },
+        );
+        from.mockImplementation((tabla: string) => (
+            tabla === 'orden_detalles' ? detalles : cabecera
+        ));
+
+        await expect(service.actualizarOrden(ORDEN_ID, ordenEditada)).resolves.toEqual({
+            mensaje: 'Orden actualizada exitosamente',
+        });
+        expect(cabecera.update).toHaveBeenCalledWith({
+            subtotal: 200,
+            fecha_entrega_estimada: '2026-11-01',
+        });
     });
 });

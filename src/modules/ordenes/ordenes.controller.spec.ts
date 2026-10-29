@@ -94,4 +94,43 @@ describe('OrdenesController', () => {
 
         expect(ordenesService.actualizarEstado).not.toHaveBeenCalled();
     });
+
+    it('delega la edición sin cliente_id ni abono', async () => {
+        ordenesService.actualizarOrden.mockResolvedValue({ mensaje: 'Orden actualizada exitosamente' });
+        const body = {
+            detalles: [{
+                tipo_item: 'Traje',
+                descripcion: 'Traje de lino',
+                cantidad: 1,
+                precio_unitario: 200,
+            }],
+        };
+
+        await request(app.getHttpServer())
+            .patch(`/ordenes/${ORDEN_ID}/editar`)
+            .send(body)
+            .expect(200);
+
+        expect(ordenesService.actualizarOrden).toHaveBeenCalledWith(ORDEN_ID, expect.objectContaining({
+            detalles: body.detalles,
+        }));
+    });
+
+    it('rechaza cliente_id y abono en la edición', async () => {
+        await request(app.getHttpServer())
+            .patch(`/ordenes/${ORDEN_ID}/editar`)
+            .send({
+                cliente_id: ORDEN_ID,
+                abono: 0,
+                detalles: [{
+                    tipo_item: 'Traje',
+                    descripcion: 'Traje de lino',
+                    cantidad: 1,
+                    precio_unitario: 200,
+                }],
+            })
+            .expect(400);
+
+        expect(ordenesService.actualizarOrden).not.toHaveBeenCalled();
+    });
 });

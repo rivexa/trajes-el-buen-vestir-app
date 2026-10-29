@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { SupabaseService } from '../../config/supabase.service';
-import { CreateOrdenDto, esEstadoProduccion } from './dto/orden.dto';
+import { CreateOrdenDto, UpdateOrdenDto, esEstadoProduccion } from './dto/orden.dto';
 import { acotarPaginacionOrdenes, sanitizarBusquedaOrden } from './ordenes.consulta';
 import { redondearDinero, subtotalDetalles } from './ordenes.dinero';
 
@@ -81,14 +81,7 @@ export class OrdenesService {
             this.falloPersistencia(ordenError, 'No se pudo registrar la orden.');
         }
 
-        const detallesParaInsertar = detalles.map((item) => ({
-            orden_id: orden.id,
-            tipo_item: item.tipo_item,
-            descripcion: item.descripcion,
-            cantidad: item.cantidad,
-            precio_unitario: redondearDinero(item.precio_unitario),
-            imagen_referencia_url: item.imagen_referencia_url,
-        }));
+        const detallesParaInsertar = this.lineasDetalle(orden.id, detalles);
 
         const { error: detallesError } = await supabase
             .from('orden_detalles')
@@ -128,46 +121,62 @@ export class OrdenesService {
         return data;
     }
 
-    async actualizarOrden(id: string, ordenData: CreateOrdenDto) {
+    async actualizarOrden(id: string, ordenData: UpdateOrdenDto) {
         const supabase = this.supabaseService.getClient();
-        const { fecha_entrega_estimada, abono = 0, detalles } = ordenData;
-        const subtotalCalculado = subtotalDetalles(detalles);
+        const subtotalCalculado = subtotalDetalles(ordenData.detalles);
+        const detallesNuevos = this.lineasDetalle(id, ordenData.detalles);
 
-        const { data: cabecera, error: cabeceraError } = await supabase
+        const { data: orden, error: errorBusqueda } = await supabase
             .from('ordenes_pedido')
-            .update({
-                fecha_entrega_estimada,
-                abono: redondearDinero(abono),
-                subtotal: subtotalCalculado
-            })
+            .select('id, estado, factura_id, abono, orden_detalles(tipo_item, descripcion, cantidad, precio_unitario, imagen_referencia_url)')
             .eq('id', id)
-            .select('id')
             .single();
 
-        if (cabeceraError) {
-            if (cabeceraError.code === 'PGRST116') {
-                throw new NotFoundException('Orden no encontrada.');
-            }
-            this.falloPersistencia(cabeceraError, 'No se pudo actualizar la orden.');
+        if (errorBusqueda && errorBusqueda.code !== 'PGRST116') {
+            this.falloPersistencia(errorBusqueda, 'No se pudo consultar la orden.');
         }
-        if (!cabecera) {
+        if (errorBusqueda || !orden) {
             throw new NotFoundException('Orden no encontrada.');
         }
+        if (orden.estado === 'Anulada') {
+            throw new ConflictException('No se puede editar una orden anulada.');
+        }
+        if (orden.factura_id) {
+            throw new ConflictException('No se puede editar una orden que ya tiene una factura asociada.');
+        }
+        if (redondearDinero(Number(orden.abono)) > subtotalCalculado) {
+            throw new BadRequestException('El nuevo subtotal no puede ser menor que el abono acumulado.');
+        }
 
-        await supabase.from('orden_detalles').delete().eq('orden_id', id);
+        const detallesAnteriores = this.lineasDetalle(id, orden.orden_detalles ?? []);
 
-        const detallesParaInsertar = detalles.map((item) => ({
-            orden_id: id,
-            tipo_item: item.tipo_item,
-            descripcion: item.descripcion,
-            cantidad: item.cantidad,
-            precio_unitario: redondearDinero(item.precio_unitario),
-            imagen_referencia_url: item.imagen_referencia_url,
-        }));
+        const { error: deleteError } = await supabase.from('orden_detalles').delete().eq('orden_id', id);
+        if (deleteError) this.falloPersistencia(deleteError, 'No se pudieron actualizar los detalles de la orden.');
 
-        const { error: detallesError } = await supabase.from('orden_detalles').insert(detallesParaInsertar);
+        const { error: insertError } = await supabase.from('orden_detalles').insert(detallesNuevos);
+        if (insertError) {
+            if (detallesAnteriores.length > 0) {
+                const { error: restoreError } = await supabase.from('orden_detalles').insert(detallesAnteriores);
+                if (restoreError) {
+                    this.logger.error(`No se pudieron restaurar los detalles ${id} [${restoreError.code}] ${restoreError.message}`);
+                }
+            }
+            this.falloPersistencia(insertError, 'No se pudieron actualizar los detalles de la orden.');
+        }
 
-        if (detallesError) this.falloPersistencia(detallesError, 'No se pudieron actualizar los detalles de la orden.');
+        const cabecera: { subtotal: number; fecha_entrega_estimada?: string } = {
+            subtotal: subtotalCalculado,
+        };
+        if (ordenData.fecha_entrega_estimada !== undefined) {
+            cabecera.fecha_entrega_estimada = ordenData.fecha_entrega_estimada;
+        }
+
+        const { error: cabeceraError } = await supabase
+            .from('ordenes_pedido')
+            .update(cabecera)
+            .eq('id', id);
+
+        if (cabeceraError) this.falloPersistencia(cabeceraError, 'No se pudo actualizar la orden.');
 
         return { mensaje: 'Orden actualizada exitosamente' };
     }
@@ -301,6 +310,26 @@ export class OrdenesService {
         }
 
         return { mensaje: 'Estado actualizado correctamente', estado_actual: data.estado };
+    }
+
+    private lineasDetalle(
+        ordenId: string,
+        detalles: Array<{
+            tipo_item: string;
+            descripcion: string;
+            cantidad: number;
+            precio_unitario: number;
+            imagen_referencia_url?: string;
+        }>,
+    ) {
+        return detalles.map((item) => ({
+            orden_id: ordenId,
+            tipo_item: item.tipo_item,
+            descripcion: item.descripcion,
+            cantidad: item.cantidad,
+            precio_unitario: redondearDinero(Number(item.precio_unitario)),
+            imagen_referencia_url: item.imagen_referencia_url,
+        }));
     }
 
     private falloPersistencia(error: { code?: string; message?: string }, mensaje: string): never {
