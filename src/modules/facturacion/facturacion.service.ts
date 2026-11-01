@@ -87,7 +87,7 @@ export class FacturacionService {
         if (errFactura) throw new InternalServerErrorException(`Error al guardar factura: ${errFactura.message}`);
 
         try {
-            const detallesInsert = dto.detalles.map((d: any) => ({
+            const detallesInsert = dto.detalles.map((d) => ({
                 factura_id: factura.id,
                 descripcion: d.descripcion,
                 cantidad: d.cantidad,
@@ -129,7 +129,7 @@ export class FacturacionService {
                 direccion: cliente.direccion || 'Quito, Ecuador'
             },
             subtotal: subtotal,
-            items: dto.detalles.map((detalle: any, index: number) => ({
+            items: dto.detalles.map((detalle, index) => ({
                 codigoPrincipal: `P-${(index + 1).toString().padStart(3, '0')}`,
                 descripcion: detalle.descripcion,
                 cantidad: detalle.cantidad,
