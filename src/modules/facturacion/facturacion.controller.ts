@@ -1,4 +1,16 @@
-import { Controller, Post, Body, Get, Query, Param, Delete, DefaultValuePipe, ParseIntPipe, ParseUUIDPipe } from '@nestjs/common';
+import {
+    Controller,
+    Post,
+    Body,
+    Get,
+    Query,
+    Param,
+    Delete,
+    DefaultValuePipe,
+    ParseIntPipe,
+    ParseUUIDPipe,
+    StreamableFile,
+} from '@nestjs/common';
 import { CreateFacturaDto } from './dto/factura.dto';
 import { FACTURAS_LIMITE_POR_DEFECTO, FACTURAS_PAGINA_MINIMA } from './facturacion.consulta';
 import { FacturacionService } from './facturacion.service';
@@ -19,6 +31,15 @@ export class FacturacionController {
     @Post('emitir')
     async generarYEnviar(@Body() body: CreateFacturaDto) {
         return this.facturacionService.emitirFactura(body);
+    }
+
+    @Get(':id/ride')
+    async generarRide(@Param('id', ParseUUIDPipe) id: string): Promise<StreamableFile> {
+        const { buffer, filename } = await this.facturacionService.generarRide(id);
+        return new StreamableFile(buffer, {
+            type: 'application/pdf',
+            disposition: `attachment; filename="${filename}"`,
+        });
     }
 
     @Get(':id')
