@@ -303,7 +303,7 @@ export class OrdenesService {
             .eq('orden_id', id)
             .order('fecha_pago', { ascending: false });
 
-        if (error) this.falloPersistencia(error, 'No se pudo listar los pagos de la orden.');
+        if (error) this.falloTablaPagos(error, 'No se pudo listar los pagos de la orden.');
         return { data: data ?? [] };
     }
 
@@ -319,7 +319,7 @@ export class OrdenesService {
         if (hasta) query = query.lte('fecha_pago', `${hasta}T23:59:59.999-05:00`);
 
         const { data, error } = await query;
-        if (error) this.falloPersistencia(error, 'No se pudo consultar el historial de pagos.');
+        if (error) this.falloTablaPagos(error, 'No se pudo consultar el historial de pagos.');
 
         const pagos = data ?? [];
         const porDia = new Map<string, { fecha: string; total: number; cantidad: number }>();
@@ -371,7 +371,7 @@ export class OrdenesService {
                     `No se pudo revertir el abono de ${ordenId} tras fallar orden_pagos [${rollbackError.code}] ${rollbackError.message}`,
                 );
             }
-            this.falloPersistencia(error, 'No se pudo guardar el historial del pago.');
+            this.falloTablaPagos(error, 'No se pudo guardar el historial del pago.');
         }
 
         return data;
@@ -384,6 +384,22 @@ export class OrdenesService {
             month: '2-digit',
             day: '2-digit',
         }).format(new Date(valor));
+    }
+
+    private falloTablaPagos(error: { code?: string; message?: string }, mensaje: string): never {
+        this.logger.error(`${mensaje} [${error.code ?? 'sin-codigo'}] ${error.message ?? ''}`);
+        const detalle = `${error.code ?? ''} ${error.message ?? ''}`.toLowerCase();
+        if (
+            detalle.includes('orden_pagos')
+            || detalle.includes('pgrst205')
+            || detalle.includes('does not exist')
+            || detalle.includes('schema cache')
+        ) {
+            throw new InternalServerErrorException(
+                'Falta la tabla orden_pagos en Supabase. Ejecute sql/001_pagos_y_crecimiento_clientes.sql y recargue el schema del API.',
+            );
+        }
+        throw new InternalServerErrorException(mensaje);
     }
 
     async actualizarEstado(id: string, nuevoEstado: string) {
