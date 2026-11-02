@@ -49,12 +49,16 @@ const detalleOrden = {
 describe('FacturacionService', () => {
     let service: FacturacionService;
     let from: jest.Mock;
+    const resultadoSriOk = {
+        exito: true,
+        estado: 'AUTORIZADO' as const,
+        claveAcceso: '1'.repeat(49),
+        xmlFirmado: '<factura id="comprobante">firmada</factura>',
+        xmlAutorizado: '<factura id="comprobante">autorizada</factura>',
+        mensaje: 'Autorizado',
+    };
     const sriService = {
-        procesarFacturaElectronica: jest.fn().mockResolvedValue({
-            exito: true,
-            claveAcceso: '1'.repeat(49),
-            xmlAutorizado: '<factura/>',
-        }),
+        procesarFacturaElectronica: jest.fn().mockResolvedValue(resultadoSriOk),
     };
 
     beforeEach(async () => {
@@ -69,11 +73,7 @@ describe('FacturacionService', () => {
 
         service = module.get(FacturacionService);
         jest.clearAllMocks();
-        sriService.procesarFacturaElectronica.mockResolvedValue({
-            exito: true,
-            claveAcceso: '1'.repeat(49),
-            xmlAutorizado: '<factura/>',
-        });
+        sriService.procesarFacturaElectronica.mockResolvedValue(resultadoSriOk);
     });
 
     it('debe construirse con el mock de Supabase', () => {
@@ -341,5 +341,61 @@ describe('FacturacionService', () => {
         }));
 
         await expect(service.anularFactura(FACTURA_ID)).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('guarda el XML del comprobante autorizado y no un sobre SOAP', async () => {
+        const clientes = consultaSupabase({ data: { ...cliente, correo: 'juan@example.com' }, error: null });
+        const facturas = consultaSupabase(
+            { data: { id: FACTURA_ID, secuencial_local: 8 }, error: null },
+            { data: null, error: null },
+        );
+        const detalles = consultaSupabase({ data: null, error: null });
+        from.mockImplementation((tabla: string) => {
+            if (tabla === 'clientes') return clientes;
+            if (tabla === 'factura_detalles') return detalles;
+            return facturas;
+        });
+
+        await service.emitirFactura({
+            cliente_id: CLIENTE_ID,
+            detalles: [{ descripcion: 'Traje', cantidad: 1, precio_unitario: 200 }],
+        });
+
+        expect(facturas.update).toHaveBeenCalledWith(expect.objectContaining({
+            estado_sri: 'AUTORIZADO',
+            clave_acceso_sri: '1'.repeat(49),
+            xml_url: '<factura id="comprobante">autorizada</factura>',
+        }));
+    });
+
+    it('al reintentar reutiliza la clave y el XML firmado guardados', async () => {
+        const clave = '2'.repeat(49);
+        const xmlFirmado = '<factura id="comprobante">firmada</factura>';
+        const facturas = consultaSupabase(
+            {
+                data: {
+                    id: FACTURA_ID,
+                    estado_sri: 'ERROR_CONEXION',
+                    secuencial_local: 8,
+                    subtotal_factura: 200,
+                    metodo_pago: 'Efectivo',
+                    clave_acceso_sri: clave,
+                    xml_url: xmlFirmado,
+                    clientes: { ...cliente, correo: 'juan@example.com' },
+                    factura_detalles: [detalleOrden],
+                },
+                error: null,
+            },
+            { data: [], error: null },
+            { data: null, error: null },
+        );
+        from.mockReturnValue(facturas);
+
+        await service.reintentarSri(FACTURA_ID);
+
+        expect(sriService.procesarFacturaElectronica).toHaveBeenCalledWith(expect.objectContaining({
+            claveAcceso: clave,
+            xmlFirmado,
+        }));
     });
 });

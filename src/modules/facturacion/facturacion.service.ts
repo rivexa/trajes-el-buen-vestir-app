@@ -4,7 +4,8 @@ import { CreateFacturaDto, FacturaDetalleDto } from './dto/factura.dto';
 import { acotarPaginacionFacturas, sanitizarBusquedaFactura } from './facturacion.consulta';
 import { redondearDinero, subtotalDetalles } from './facturacion.dinero';
 import { SriService } from '../sri/sri.service';
-import { FacturaSRIDto } from '../sri/sri.interface';
+import { FacturaSRIDto, ResultadoSri } from '../sri/sri.interface';
+import { esXmlComprobanteFactura } from '../sri/sri.respuesta';
 
 @Injectable()
 export class FacturacionService {
@@ -129,35 +130,28 @@ export class FacturacionService {
                 tipoIdentificacion,
                 razonSocial: `${cliente.nombres} ${cliente.apellidos}`.trim(),
                 identificacion: identificacion,
-                direccion: cliente.direccion || 'Quito, Ecuador'
+                direccion: cliente.direccion || 'Quito, Ecuador',
+                email: cliente.correo || undefined,
             },
-            subtotal: subtotal,
+            subtotal,
+            metodoPago: dto.metodo_pago || 'Efectivo',
             items: lineas.map((detalle, index) => ({
                 codigoPrincipal: `P-${(index + 1).toString().padStart(3, '0')}`,
                 descripcion: detalle.descripcion,
                 cantidad: detalle.cantidad,
                 precioUnitario: redondearDinero(detalle.precio_unitario),
-                descuento: 0
-            }))
+                descuento: 0,
+            })),
         };
 
-        // 8. Enviar al SRI
         try {
             const resultadoSri = await this.sriService.procesarFacturaElectronica(sriDto);
-
-            await supabase.from('facturas').update({
-                estado_sri: resultadoSri.exito ? 'AUTORIZADO' : 'RECHAZADO',
-                numero_factura_sri: secuencialFormateado,
-                clave_acceso_sri: resultadoSri.claveAcceso,
-                xml_url: resultadoSri.xmlAutorizado,
-                mensaje_sri: resultadoSri.exito ? 'Autorizado' : 'Rechazado por validaciones del SRI.'
-            }).eq('id', factura.id);
-
+            await this.persistirResultadoSri(factura.id, secuencialFormateado, resultadoSri);
             return { ...factura, sri: resultadoSri };
         } catch (sriError: any) {
             await supabase.from('facturas').update({
                 estado_sri: 'ERROR_CONEXION',
-                mensaje_sri: sriError.message || 'Error desconocido al firmar o transmitir.'
+                mensaje_sri: sriError.message || 'Error desconocido al firmar o transmitir.',
             }).eq('id', factura.id);
             return { ...factura, sri: { exito: false, mensaje: 'Registrada localmente, falló conexión con SRI.' } };
         }
@@ -261,44 +255,66 @@ export class FacturacionService {
         const identificacion = factura.clientes.cedula_ruc;
         const tipoIdentificacion = identificacion.length === 13 ? '04' : (identificacion.length === 10 ? '05' : '06');
         const secuencialFormateado = (factura.secuencial_local || 1).toString().padStart(9, '0');
+        const xmlGuardado = typeof factura.xml_url === 'string' ? factura.xml_url : undefined;
+        const claveGuardada = typeof factura.clave_acceso_sri === 'string' ? factura.clave_acceso_sri : undefined;
 
         const sriDto: FacturaSRIDto = {
             secuencial: secuencialFormateado,
             cliente: {
                 tipoIdentificacion,
                 razonSocial: `${factura.clientes.nombres} ${factura.clientes.apellidos}`.trim(),
-                identificacion: identificacion,
-                direccion: factura.clientes.direccion || 'Quito, Ecuador'
+                identificacion,
+                direccion: factura.clientes.direccion || 'Quito, Ecuador',
+                email: factura.clientes.correo || undefined,
             },
             subtotal: factura.subtotal_factura,
-            items: factura.factura_detalles.map((detalle: any, index: number) => ({
+            metodoPago: factura.metodo_pago || 'Efectivo',
+            claveAcceso: claveGuardada || undefined,
+            xmlFirmado: esXmlComprobanteFactura(xmlGuardado) ? xmlGuardado : undefined,
+            items: factura.factura_detalles.map((detalle: { descripcion: string; cantidad: number; precio_unitario: number }, index: number) => ({
                 codigoPrincipal: `P-${(index + 1).toString().padStart(3, '0')}`,
                 descripcion: detalle.descripcion,
                 cantidad: detalle.cantidad,
                 precioUnitario: detalle.precio_unitario,
-                descuento: 0
-            }))
+                descuento: 0,
+            })),
         };
 
         try {
             const resultadoSri = await this.sriService.procesarFacturaElectronica(sriDto);
-
-            await supabase.from('facturas').update({
-                estado_sri: resultadoSri.exito ? 'AUTORIZADO' : 'RECHAZADO',
-                numero_factura_sri: secuencialFormateado,
-                clave_acceso_sri: resultadoSri.claveAcceso,
-                xml_url: resultadoSri.xmlAutorizado,
-                mensaje_sri: resultadoSri.exito ? 'Autorizado' : 'Rechazado por validaciones del SRI.'
-            }).eq('id', factura.id);
-
+            await this.persistirResultadoSri(factura.id, secuencialFormateado, resultadoSri);
             return { mensaje: 'Reintento finalizado', sri: resultadoSri };
         } catch (sriError: any) {
             await supabase.from('facturas').update({
                 estado_sri: 'ERROR_CONEXION',
-                mensaje_sri: sriError.message || 'Fallo de conexión.'
+                mensaje_sri: sriError.message || 'Fallo de conexión.',
             }).eq('id', factura.id);
             return { mensaje: 'El SRI sigue sin responder.', sri: { exito: false } };
         }
+    }
+
+    private async persistirResultadoSri(
+        facturaId: string,
+        secuencialFormateado: string,
+        resultado: ResultadoSri,
+    ) {
+        const estadoLocal =
+            resultado.estado === 'AUTORIZADO' ? 'AUTORIZADO'
+                : resultado.estado === 'PENDIENTE' ? 'PROCESANDO'
+                    : resultado.estado === 'ERROR_CONEXION' ? 'ERROR_CONEXION'
+                        : 'RECHAZADO';
+
+        const { error } = await this.supabaseService.getClient().from('facturas').update({
+            estado_sri: estadoLocal,
+            numero_factura_sri: secuencialFormateado,
+            clave_acceso_sri: resultado.claveAcceso,
+            // Autorizado: comprobante. Si no: XML firmado para reutilizar clave/firma.
+            xml_url: resultado.xmlAutorizado ?? resultado.xmlFirmado,
+            mensaje_sri: resultado.mensaje
+                ?? (resultado.exito ? 'Autorizado' : 'Rechazado por validaciones del SRI.'),
+        }).eq('id', facturaId);
+
+        if (error) this.falloPersistencia(error, 'No se pudo guardar el resultado del SRI.');
     }
 
     private idsOrdenes(dto: CreateFacturaDto): string[] {
