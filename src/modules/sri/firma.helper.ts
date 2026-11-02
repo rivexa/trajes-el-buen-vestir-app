@@ -4,7 +4,13 @@ import * as path from 'path';
 import * as os from 'os';
 import { Crypto } from '@peculiar/webcrypto';
 import * as xadesjs from 'xadesjs';
-import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
+import {
+    DOMParser,
+    XMLSerializer,
+    type Document as XmldomDocument,
+    type Element as XmldomElement,
+    type Node as XmldomNode,
+} from '@xmldom/xmldom';
 
 (global as any).DOMParser = DOMParser;
 (global as any).XMLSerializer = XMLSerializer;
@@ -136,11 +142,13 @@ export class FirmaHelper {
     }
 
     /** @xmldom/xmldom no implementa setIdAttribute; xadesjs resuelve #comprobante vía getElementById. */
-    private static habilitarBusquedaPorId(documento: Document): void {
-        (documento as any).getElementById = (idBuscado: string) => {
-            const recorrer = (nodo: Node): Element | null => {
+    private static habilitarBusquedaPorId(documento: XmldomDocument): void {
+        (documento as XmldomDocument & {
+            getElementById: (id: string) => XmldomElement | null;
+        }).getElementById = (idBuscado: string) => {
+            const recorrer = (nodo: XmldomNode): XmldomElement | null => {
                 if (nodo.nodeType === 1) {
-                    const elemento = nodo as Element;
+                    const elemento = nodo as XmldomElement;
                     const id = elemento.getAttribute('id') ?? elemento.getAttribute('Id');
                     if (id === idBuscado) {
                         return elemento;
@@ -148,7 +156,9 @@ export class FirmaHelper {
                 }
                 const hijos = nodo.childNodes;
                 for (let i = 0; i < hijos.length; i++) {
-                    const encontrado = recorrer(hijos.item(i)!);
+                    const hijo = hijos.item(i);
+                    if (!hijo) continue;
+                    const encontrado = recorrer(hijo);
                     if (encontrado) {
                         return encontrado;
                     }
