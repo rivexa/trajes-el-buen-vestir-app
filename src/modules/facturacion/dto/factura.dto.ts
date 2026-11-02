@@ -2,6 +2,7 @@ import { Transform, Type } from 'class-transformer';
 import {
     ArrayMaxSize,
     ArrayMinSize,
+    ArrayUnique,
     IsArray,
     IsIn,
     IsInt,
@@ -12,6 +13,7 @@ import {
     IsUUID,
     MaxLength,
     Min,
+    ValidateIf,
     ValidateNested,
 } from 'class-validator';
 
@@ -52,6 +54,13 @@ export class CreateFacturaDto {
     @IsUUID(undefined, { message: 'El ID de la orden debe ser un UUID válido.' })
     orden_id?: string;
 
+    @IsOptional()
+    @IsArray({ message: 'Las órdenes deben enviarse en una lista.' })
+    @ArrayMaxSize(20, { message: 'La factura no puede asociar más de 20 órdenes.' })
+    @ArrayUnique({ message: 'Hay órdenes repetidas en la factura.' })
+    @IsUUID(undefined, { each: true, message: 'Cada orden_id debe ser un UUID válido.' })
+    orden_ids?: string[];
+
     @Transform(({ value }) => recortarOpcional(value))
     @IsOptional()
     @IsIn(['Efectivo', 'Transferencia', 'Tarjeta de Crédito', 'Tarjeta de Débito'], {
@@ -59,10 +68,11 @@ export class CreateFacturaDto {
     })
     metodo_pago?: string;
 
+    @ValidateIf((factura: CreateFacturaDto) => !factura.orden_id && !factura.orden_ids?.length)
     @IsArray({ message: 'Los detalles deben enviarse en una lista.' })
     @ArrayMinSize(1, { message: 'La factura debe contener al menos un ítem.' })
     @ArrayMaxSize(50, { message: 'La factura no puede tener más de 50 ítems.' })
     @ValidateNested({ each: true })
     @Type(() => FacturaDetalleDto)
-    detalles: FacturaDetalleDto[];
+    detalles?: FacturaDetalleDto[];
 }

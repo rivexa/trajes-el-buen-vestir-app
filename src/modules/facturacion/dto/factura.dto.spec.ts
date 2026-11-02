@@ -68,6 +68,22 @@ describe('CreateFacturaDto', () => {
         expect(errors.some((error) => error.property === 'detalles')).toBe(true);
     });
 
+    it('acepta una o varias órdenes sin mandar ítems', async () => {
+        const una = await validarFactura({
+            cliente_id: facturaValida.cliente_id,
+            orden_id: '22222222-2222-4222-8222-222222222222',
+        });
+        const varias = await validarFactura({
+            cliente_id: facturaValida.cliente_id,
+            orden_ids: [
+                '22222222-2222-4222-8222-222222222222',
+                '33333333-3333-4333-8333-333333333333',
+            ],
+        });
+        expect(una.errors).toHaveLength(0);
+        expect(varias.errors).toHaveLength(0);
+    });
+
     it('rechaza un método de pago fuera del catálogo', async () => {
         const { errors } = await validarFactura({
             ...facturaValida,
