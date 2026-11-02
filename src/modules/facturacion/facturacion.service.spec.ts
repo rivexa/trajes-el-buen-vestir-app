@@ -368,6 +368,57 @@ describe('FacturacionService', () => {
         }));
     });
 
+    it('responde 409 si se pide RIDE de una factura no autorizada', async () => {
+        from.mockReturnValue(consultaSupabase({
+            data: { id: FACTURA_ID, estado_sri: 'PROCESANDO', xml_url: '<factura/>' },
+            error: null,
+        }));
+
+        await expect(service.generarRide(FACTURA_ID)).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('genera el RIDE desde el XML autorizado guardado', async () => {
+        const xml = `<?xml version="1.0"?>
+<factura id="comprobante" version="1.1.0">
+  <infoTributaria>
+    <ambiente>1</ambiente><tipoEmision>1</tipoEmision>
+    <razonSocial>Emisor</razonSocial><nombreComercial>Trajes</nombreComercial>
+    <ruc>1753329182001</ruc><claveAcceso>${'1'.repeat(49)}</claveAcceso>
+    <codDoc>01</codDoc><estab>001</estab><ptoEmi>001</ptoEmi>
+    <secuencial>000000008</secuencial><dirMatriz>Quito</dirMatriz>
+  </infoTributaria>
+  <infoFactura>
+    <fechaEmision>02/11/2026</fechaEmision>
+    <tipoIdentificacionComprador>05</tipoIdentificacionComprador>
+    <razonSocialComprador>Juan</razonSocialComprador>
+    <identificacionComprador>1710034065</identificacionComprador>
+    <totalSinImpuestos>10.00</totalSinImpuestos><totalDescuento>0.00</totalDescuento>
+    <totalConImpuestos><totalImpuesto><codigo>2</codigo><codigoPorcentaje>0</codigoPorcentaje><baseImponible>10.00</baseImponible><valor>0.00</valor></totalImpuesto></totalConImpuestos>
+    <importeTotal>10.00</importeTotal><moneda>DOLAR</moneda>
+  </infoFactura>
+  <detalles><detalle>
+    <codigoPrincipal>P-001</codigoPrincipal><descripcion>Item</descripcion>
+    <cantidad>1.00</cantidad><precioUnitario>10.00</precioUnitario>
+    <descuento>0.00</descuento><precioTotalSinImpuesto>10.00</precioTotalSinImpuesto>
+  </detalle></detalles>
+</factura>`;
+        from.mockReturnValue(consultaSupabase({
+            data: {
+                id: FACTURA_ID,
+                estado_sri: 'AUTORIZADO',
+                xml_url: xml,
+                clave_acceso_sri: '1'.repeat(49),
+                numero_factura_sri: '000000008',
+                secuencial_local: 8,
+            },
+            error: null,
+        }));
+
+        const ride = await service.generarRide(FACTURA_ID);
+        expect(ride.filename).toBe('RIDE-001-001-000000008.pdf');
+        expect(ride.buffer.subarray(0, 4).toString()).toBe('%PDF');
+    });
+
     it('al reintentar reutiliza la clave y el XML firmado guardados', async () => {
         const clave = '2'.repeat(49);
         const xmlFirmado = '<factura id="comprobante">firmada</factura>';

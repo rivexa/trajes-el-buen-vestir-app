@@ -11,6 +11,7 @@ describe('FacturacionController', () => {
         obtenerTodas: jest.fn(),
         emitirFactura: jest.fn(),
         obtenerPorId: jest.fn(),
+        generarRide: jest.fn(),
         reintentarSri: jest.fn(),
         anularFactura: jest.fn(),
     };
@@ -50,5 +51,20 @@ describe('FacturacionController', () => {
     it('rechaza un id que no es UUID', async () => {
         await request(app.getHttpServer()).delete('/facturacion/abc').expect(400);
         expect(facturacionService.anularFactura).not.toHaveBeenCalled();
+    });
+
+    it('expone el RIDE como PDF descargable', async () => {
+        facturacionService.generarRide.mockResolvedValue({
+            buffer: Buffer.from('%PDF-fake'),
+            filename: 'RIDE-001-001-000000008.pdf',
+        });
+
+        const respuesta = await request(app.getHttpServer())
+            .get('/facturacion/44444444-4444-4444-8444-444444444444/ride')
+            .expect(200);
+
+        expect(facturacionService.generarRide).toHaveBeenCalledWith('44444444-4444-4444-8444-444444444444');
+        expect(respuesta.headers['content-type']).toMatch(/application\/pdf/);
+        expect(respuesta.headers['content-disposition']).toContain('RIDE-001-001-000000008.pdf');
     });
 });

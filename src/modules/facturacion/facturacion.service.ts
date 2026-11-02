@@ -6,6 +6,8 @@ import { redondearDinero, subtotalDetalles } from './facturacion.dinero';
 import { SriService } from '../sri/sri.service';
 import { FacturaSRIDto, ResultadoSri } from '../sri/sri.interface';
 import { esXmlComprobanteFactura } from '../sri/sri.respuesta';
+import { parsearRideDesdeXml } from './ride/ride.parser';
+import { generarRidePdf } from './ride/ride.pdf';
 
 @Injectable()
 export class FacturacionService {
@@ -183,6 +185,46 @@ export class FacturacionService {
             .eq('factura_id', id);
 
         return { ...data, ordenes: ordenes ?? [] };
+    }
+
+    async generarRide(id: string): Promise<{ buffer: Buffer; filename: string }> {
+        const supabase = this.supabaseService.getClient();
+        const { data: factura, error } = await supabase
+            .from('facturas')
+            .select('id, estado_sri, xml_url, clave_acceso_sri, numero_factura_sri, secuencial_local')
+            .eq('id', id)
+            .single();
+
+        if (error && error.code !== 'PGRST116') {
+            this.falloPersistencia(error, 'No se pudo consultar la factura.');
+        }
+        if (error || !factura) {
+            throw new NotFoundException('Factura no encontrada.');
+        }
+        if (factura.estado_sri !== 'AUTORIZADO') {
+            throw new ConflictException('El RIDE solo se genera para comprobantes autorizados por el SRI.');
+        }
+        if (!esXmlComprobanteFactura(factura.xml_url)) {
+            throw new BadRequestException('La factura autorizada no tiene un XML de comprobante guardado.');
+        }
+
+        try {
+            const ride = await parsearRideDesdeXml(factura.xml_url);
+            if (!ride.claveAcceso && factura.clave_acceso_sri) {
+                ride.claveAcceso = factura.clave_acceso_sri;
+            }
+            const buffer = await generarRidePdf(ride);
+            const secuencial = ride.secuencial
+                || factura.numero_factura_sri
+                || String(factura.secuencial_local || '1').padStart(9, '0');
+            return {
+                buffer,
+                filename: `RIDE-${ride.estab || '001'}-${ride.ptoEmi || '001'}-${secuencial}.pdf`,
+            };
+        } catch (error: any) {
+            this.logger.error(`No se pudo generar el RIDE de ${id}: ${error.message}`);
+            throw new InternalServerErrorException('No se pudo generar el RIDE a partir del XML autorizado.');
+        }
     }
 
     async anularFactura(id: string) {
