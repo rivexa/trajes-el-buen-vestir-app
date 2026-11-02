@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, InternalServerErrorException } from '@nestjs/common';
+import { BadRequestException, ConflictException, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { SupabaseService } from '../../config/supabase.service';
 import { SriService } from '../sri/sri.service';
@@ -267,5 +267,79 @@ describe('FacturacionService', () => {
             cliente_id: CLIENTE_ID,
             orden_id: ORDEN_ID,
         })).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('sanitiza el search antes de interpolarlo en el filtro', async () => {
+        const consulta = consultaSupabase({ data: [], count: 0, error: null });
+        from.mockReturnValue(consulta);
+
+        await service.obtenerTodas(1, 10, 'juan,nombres.eq.hack');
+
+        expect(consulta.or).toHaveBeenCalledWith(
+            'clientes.cedula_ruc.ilike.%juannombres.eq.hack%,clientes.nombres.ilike.%juannombres.eq.hack%,clientes.apellidos.ilike.%juannombres.eq.hack%',
+        );
+    });
+
+    it('no aplica filtro cuando el search queda vacío al sanitizar', async () => {
+        const consulta = consultaSupabase({ data: [], count: 0, error: null });
+        from.mockReturnValue(consulta);
+
+        await service.obtenerTodas(1, 10, ',,,%%%');
+
+        expect(consulta.or).not.toHaveBeenCalled();
+    });
+
+    it('responde 404 si la factura a consultar no existe', async () => {
+        from.mockReturnValue(consultaSupabase({
+            data: null,
+            error: { code: 'PGRST116', message: 'no rows' },
+        }));
+
+        await expect(service.obtenerPorId(FACTURA_ID)).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('responde 409 si se intenta anular un comprobante autorizado', async () => {
+        from.mockReturnValue(consultaSupabase({
+            data: { id: FACTURA_ID, estado_sri: 'AUTORIZADO' },
+            error: null,
+        }));
+
+        await expect(service.anularFactura(FACTURA_ID)).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('al anular suelta las órdenes y les devuelve el abono anterior', async () => {
+        const facturas = consultaSupabase(
+            { data: { id: FACTURA_ID, estado_sri: 'RECHAZADO' }, error: null },
+            { data: null, error: null },
+        );
+        const ordenes = consultaSupabase(
+            {
+                data: [{ id: ORDEN_ID, abono_antes_facturar: 50 }],
+                error: null,
+            },
+            { data: null, error: null },
+        );
+        from.mockImplementation((tabla: string) => (
+            tabla === 'ordenes_pedido' ? ordenes : facturas
+        ));
+
+        await expect(service.anularFactura(FACTURA_ID)).resolves.toEqual({
+            mensaje: 'Factura anulada. Las órdenes asociadas recuperaron su saldo pendiente.',
+        });
+        expect(ordenes.update).toHaveBeenCalledWith({
+            factura_id: null,
+            abono: 50,
+            abono_antes_facturar: null,
+            saldo_antes_facturar: null,
+        });
+    });
+
+    it('responde 404 si la factura a anular no existe', async () => {
+        from.mockReturnValue(consultaSupabase({
+            data: null,
+            error: { code: 'PGRST116', message: 'no rows' },
+        }));
+
+        await expect(service.anularFactura(FACTURA_ID)).rejects.toBeInstanceOf(NotFoundException);
     });
 });

@@ -1,6 +1,7 @@
 import { Injectable, InternalServerErrorException, NotFoundException, BadRequestException, ConflictException, Logger } from '@nestjs/common';
 import { SupabaseService } from '../../config/supabase.service';
 import { CreateFacturaDto, FacturaDetalleDto } from './dto/factura.dto';
+import { acotarPaginacionFacturas, sanitizarBusquedaFactura } from './facturacion.consulta';
 import { redondearDinero, subtotalDetalles } from './facturacion.dinero';
 import { SriService } from '../sri/sri.service';
 import { FacturaSRIDto } from '../sri/sri.interface';
@@ -14,29 +15,33 @@ export class FacturacionService {
         private readonly sriService: SriService
     ) { }
 
-    async obtenerTodas(page: number = 1, limit: number = 10, search?: string) {
+    async obtenerTodas(page?: number, limit?: number, search = '') {
+        const { page: pagina, limit: tamano } = acotarPaginacionFacturas(page, limit);
+        const termino = sanitizarBusquedaFactura(search);
+        const from = (pagina - 1) * tamano;
+        const to = from + tamano - 1;
         const supabase = this.supabaseService.getClient();
-        const from = (page - 1) * limit;
-        const to = from + limit - 1;
 
         let query = supabase
             .from('facturas')
             .select('*, clientes!inner(nombres, apellidos, cedula_ruc), ordenes_pedido!facturas_orden_id_fkey(numero_orden)', { count: 'exact' });
 
-        if (search) {
-            query = query.or(`clientes.cedula_ruc.ilike.%${search}%,clientes.nombres.ilike.%${search}%,clientes.apellidos.ilike.%${search}%`);
+        if (termino) {
+            query = query.or(`clientes.cedula_ruc.ilike.%${termino}%,clientes.nombres.ilike.%${termino}%,clientes.apellidos.ilike.%${termino}%`);
         }
 
         const { data, count, error } = await query.order('fecha_emision', { ascending: false }).range(from, to);
 
-        if (error) {
-            console.error("Error exacto de Supabase:", error);
-            throw new InternalServerErrorException(`Error de BD al consultar facturas: ${error.message}`);
-        }
+        if (error) this.falloPersistencia(error, 'No se pudo listar las facturas.');
 
         return {
             data,
-            meta: { total: count, page, limit, totalPages: Math.ceil((count || 0) / limit) }
+            meta: {
+                total: count,
+                page: pagina,
+                limit: tamano,
+                totalPages: Math.ceil((count || 0) / tamano),
+            },
         };
     }
 
@@ -171,12 +176,10 @@ export class FacturacionService {
             .eq('id', id)
             .single();
 
-        if (error) {
-            console.error("Error exacto de Supabase en obtenerPorId:", error);
-            throw new InternalServerErrorException(`Error de BD al consultar la factura: ${error.message}`);
+        if (error && error.code !== 'PGRST116') {
+            this.falloPersistencia(error, 'No se pudo consultar la factura.');
         }
-
-        if (!data) {
+        if (error || !data) {
             throw new NotFoundException('Factura no encontrada.');
         }
 
@@ -191,34 +194,60 @@ export class FacturacionService {
     async anularFactura(id: string) {
         const supabase = this.supabaseService.getClient();
 
-        // 1. Marcar la factura como ANULADA
-        const { error } = await supabase.from('facturas').update({ estado_sri: 'ANULADA' }).eq('id', id);
-        if (error) throw new InternalServerErrorException('Error al anular la factura.');
+        const { data: factura, error: errorBusqueda } = await supabase
+            .from('facturas')
+            .select('id, estado_sri')
+            .eq('id', id)
+            .single();
 
-        // 2. Ejecutar Rollback 
-        const { data: ordenesAfectadas } = await supabase
+        if (errorBusqueda && errorBusqueda.code !== 'PGRST116') {
+            this.falloPersistencia(errorBusqueda, 'No se pudo consultar la factura.');
+        }
+        if (errorBusqueda || !factura) {
+            throw new NotFoundException('Factura no encontrada.');
+        }
+        if (factura.estado_sri === 'AUTORIZADO') {
+            throw new ConflictException('No se puede anular un comprobante autorizado por el SRI.');
+        }
+        if (factura.estado_sri === 'ANULADA') {
+            throw new ConflictException('Esta factura ya se encuentra anulada.');
+        }
+
+        const { error } = await supabase.from('facturas').update({ estado_sri: 'ANULADA' }).eq('id', id);
+        if (error) this.falloPersistencia(error, 'No se pudo anular la factura.');
+
+        const { data: ordenesAfectadas, error: errorOrdenes } = await supabase
             .from('ordenes_pedido')
-            .select('id, abono_antes_facturar, saldo_antes_facturar')
+            .select('id, abono_antes_facturar')
             .eq('factura_id', id);
 
-        if (ordenesAfectadas && ordenesAfectadas.length > 0) {
-            for (const ord of ordenesAfectadas) {
-                const restauracion: {
-                    factura_id: null;
-                    abono?: number | null;
-                    abono_antes_facturar?: null;
-                    saldo_antes_facturar?: null;
-                } = { factura_id: null };
-                if (ord.abono_antes_facturar != null) {
-                    restauracion.abono = ord.abono_antes_facturar;
-                    restauracion.abono_antes_facturar = null;
-                    restauracion.saldo_antes_facturar = null;
-                }
-                await supabase.from('ordenes_pedido').update(restauracion).eq('id', ord.id);
+        if (errorOrdenes) this.falloPersistencia(errorOrdenes, 'No se pudieron restaurar las órdenes de la factura.');
+
+        for (const ord of ordenesAfectadas ?? []) {
+            const restauracion: {
+                factura_id: null;
+                abono?: number;
+                abono_antes_facturar: null;
+                saldo_antes_facturar: null;
+            } = {
+                factura_id: null,
+                abono_antes_facturar: null,
+                saldo_antes_facturar: null,
+            };
+            if (ord.abono_antes_facturar != null) {
+                restauracion.abono = Number(ord.abono_antes_facturar);
+            }
+            const { error: errorRestaurar } = await supabase
+                .from('ordenes_pedido')
+                .update(restauracion)
+                .eq('id', ord.id);
+
+            if (errorRestaurar) {
+                this.falloPersistencia(errorRestaurar, 'No se pudo devolver la orden a su saldo anterior.');
             }
         }
 
-        return { mensaje: 'Factura anulada y rollback de órdenes ejecutado con éxito.' };
+        return { mensaje: 'Factura anulada. Las órdenes asociadas recuperaron su saldo pendiente.' };
     }
 
     async reintentarSri(id: string) {
@@ -374,5 +403,10 @@ export class FacturacionService {
         if (error) {
             this.logger.error(`No se pudo revertir la cabecera ${facturaId} [${error.code}] ${error.message}`);
         }
+    }
+
+    private falloPersistencia(error: { code?: string; message?: string }, mensaje: string): never {
+        this.logger.error(`${mensaje} [${error.code ?? 'sin-codigo'}] ${error.message ?? ''}`);
+        throw new InternalServerErrorException(mensaje);
     }
 }
