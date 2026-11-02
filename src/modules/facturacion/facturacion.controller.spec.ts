@@ -1,4 +1,4 @@
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { ConflictException, INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 import { FacturacionController } from './facturacion.controller';
@@ -66,5 +66,23 @@ describe('FacturacionController', () => {
         expect(facturacionService.generarRide).toHaveBeenCalledWith('44444444-4444-4444-8444-444444444444');
         expect(respuesta.headers['content-type']).toMatch(/application\/pdf/);
         expect(respuesta.headers['content-disposition']).toContain('RIDE-001-001-000000008.pdf');
+    });
+
+    it('no anula un comprobante autorizado', async () => {
+        facturacionService.anularFactura.mockRejectedValue(
+            new ConflictException('No se puede anular un comprobante autorizado por el SRI.'),
+        );
+
+        await request(app.getHttpServer())
+            .delete('/facturacion/44444444-4444-4444-8444-444444444444')
+            .expect(409);
+    });
+
+    it('rechaza emitir sin detalles ni órdenes', async () => {
+        await request(app.getHttpServer())
+            .post('/facturacion/emitir')
+            .send({ cliente_id: '11111111-1111-4111-8111-111111111111' })
+            .expect(400);
+        expect(facturacionService.emitirFactura).not.toHaveBeenCalled();
     });
 });

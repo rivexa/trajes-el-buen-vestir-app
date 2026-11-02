@@ -368,6 +368,39 @@ describe('FacturacionService', () => {
         }));
     });
 
+    it('persiste clave y XML firmado aunque el SRI falle por conexión', async () => {
+        sriService.procesarFacturaElectronica.mockResolvedValue({
+            exito: false,
+            estado: 'ERROR_CONEXION',
+            claveAcceso: '3'.repeat(49),
+            xmlFirmado: '<factura id="comprobante">firmada</factura>',
+            xmlAutorizado: null,
+            mensaje: 'Fallo al comunicar con el SRI.',
+        });
+        const clientes = consultaSupabase({ data: { ...cliente, correo: 'juan@example.com' }, error: null });
+        const facturas = consultaSupabase(
+            { data: { id: FACTURA_ID, secuencial_local: 8 }, error: null },
+            { data: null, error: null },
+        );
+        const detalles = consultaSupabase({ data: null, error: null });
+        from.mockImplementation((tabla: string) => {
+            if (tabla === 'clientes') return clientes;
+            if (tabla === 'factura_detalles') return detalles;
+            return facturas;
+        });
+
+        await service.emitirFactura({
+            cliente_id: CLIENTE_ID,
+            detalles: [{ descripcion: 'Traje', cantidad: 1, precio_unitario: 200 }],
+        });
+
+        expect(facturas.update).toHaveBeenCalledWith(expect.objectContaining({
+            estado_sri: 'ERROR_CONEXION',
+            clave_acceso_sri: '3'.repeat(49),
+            xml_url: '<factura id="comprobante">firmada</factura>',
+        }));
+    });
+
     it('responde 409 si se pide RIDE de una factura no autorizada', async () => {
         from.mockReturnValue(consultaSupabase({
             data: { id: FACTURA_ID, estado_sri: 'PROCESANDO', xml_url: '<factura/>' },
