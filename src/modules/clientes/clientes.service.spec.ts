@@ -10,15 +10,21 @@ type ResultadoConsulta = {
     error?: { code?: string; message?: string } | null;
 };
 
-function consultaSupabase(resultado: ResultadoConsulta) {
+function consultaSupabase(...resultados: ResultadoConsulta[]) {
+    const cola = [...resultados];
     const consulta: any = {};
-    for (const metodo of ['select', 'insert', 'update', 'delete', 'eq', 'or', 'order', 'range', 'single']) {
+    for (const metodo of [
+        'select', 'insert', 'update', 'delete', 'eq', 'gte', 'lte', 'or', 'order', 'range', 'limit', 'single',
+    ]) {
         consulta[metodo] = jest.fn().mockReturnValue(consulta);
     }
     consulta.then = (
         resolve: (value: ResultadoConsulta) => unknown,
         reject?: (reason: unknown) => unknown,
-    ) => Promise.resolve(resultado).then(resolve, reject);
+    ) => {
+        const resultado = cola.length > 0 ? cola.shift()! : { data: null, error: null };
+        return Promise.resolve(resultado).then(resolve, reject);
+    };
     return consulta;
 }
 
@@ -98,6 +104,27 @@ describe('ClientesService', () => {
         await expect(
             service.eliminar('11111111-1111-4111-8111-111111111111'),
         ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('calcula altas del período y total general para crecimiento', async () => {
+        const consulta = consultaSupabase(
+            { data: null, count: 40, error: null },
+            {
+                data: [
+                    { id: '1', fecha_creacion: '2026-03-15T03:30:00.000Z' },
+                    { id: '2', fecha_creacion: '2026-03-14T20:00:00.000Z' },
+                ],
+                error: null,
+            },
+        );
+        from.mockReturnValue(consulta);
+
+        await expect(service.crecimiento('2026-03-01', '2026-03-31')).resolves.toEqual({
+            total_general: 40,
+            altas_periodo: 2,
+            por_dia: [{ fecha: '2026-03-14', altas: 2 }],
+            meta: { desde: '2026-03-01', hasta: '2026-03-31' },
+        });
     });
 
     it('responde 409 si el cliente tiene órdenes asociadas', async () => {

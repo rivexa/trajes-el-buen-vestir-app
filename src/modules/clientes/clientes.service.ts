@@ -96,6 +96,53 @@ export class ClientesService {
         return data;
     }
 
+    async crecimiento(desde?: string, hasta?: string) {
+        const supabase = this.supabaseService.getClient();
+
+        const { count: totalGeneral, error: errorTotal } = await supabase
+            .from('clientes')
+            .select('id', { count: 'exact', head: true });
+
+        if (errorTotal) this.falloPersistencia(errorTotal, 'No se pudo contar los clientes.');
+
+        let queryPeriodo = supabase
+            .from('clientes')
+            .select('id, fecha_creacion')
+            .order('fecha_creacion', { ascending: true })
+            .limit(5000);
+
+        if (desde) queryPeriodo = queryPeriodo.gte('fecha_creacion', `${desde}T00:00:00.000-05:00`);
+        if (hasta) queryPeriodo = queryPeriodo.lte('fecha_creacion', `${hasta}T23:59:59.999-05:00`);
+
+        const { data, error } = await queryPeriodo;
+        if (error) this.falloPersistencia(error, 'No se pudo consultar el crecimiento de clientes.');
+
+        const altas = data ?? [];
+        const porDia = new Map<string, { fecha: string; altas: number }>();
+        for (const cliente of altas) {
+            if (!cliente.fecha_creacion) continue;
+            const fecha = new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'America/Guayaquil',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+            }).format(new Date(cliente.fecha_creacion));
+            const actual = porDia.get(fecha) ?? { fecha, altas: 0 };
+            actual.altas += 1;
+            porDia.set(fecha, actual);
+        }
+
+        return {
+            total_general: totalGeneral ?? 0,
+            altas_periodo: altas.length,
+            por_dia: [...porDia.values()],
+            meta: {
+                desde: desde ?? null,
+                hasta: hasta ?? null,
+            },
+        };
+    }
+
     async eliminar(id: string) {
         const { data, error } = await this.supabaseService.getClient()
             .from('clientes')

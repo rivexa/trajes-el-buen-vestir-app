@@ -79,4 +79,21 @@ describe('RegistrarPagoDto', () => {
         const errors = await validate(dto);
         expect(errors.some((error) => error.property === 'monto')).toBe(true);
     });
+
+    it('acepta método de pago del catálogo y nota', async () => {
+        const dto = plainToInstance(RegistrarPagoDto, {
+            monto: 20,
+            metodo_pago: 'Transferencia',
+            nota: '  Anticipo  ',
+        });
+        const errors = await validate(dto);
+        expect(errors).toHaveLength(0);
+        expect(dto.nota).toBe('Anticipo');
+    });
+
+    it('rechaza un método de pago inválido', async () => {
+        const dto = plainToInstance(RegistrarPagoDto, { monto: 20, metodo_pago: 'Cripto' });
+        const errors = await validate(dto);
+        expect(errors.some((error) => error.property === 'metodo_pago')).toBe(true);
+    });
 });
