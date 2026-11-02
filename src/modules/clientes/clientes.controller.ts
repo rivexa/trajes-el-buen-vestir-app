@@ -16,6 +16,14 @@ export class ClientesController {
         return this.clientesService.obtenerTodos(page, limit, search ?? '');
     }
 
+    @Get('crecimiento')
+    async crecimiento(
+        @Query('desde') desde?: string,
+        @Query('hasta') hasta?: string,
+    ) {
+        return this.clientesService.crecimiento(desde, hasta);
+    }
+
     @Get('buscar/:cedula')
     async buscarCliente(@Param('cedula') cedula: string) {
         return this.clientesService.buscarPorCedula(cedula);

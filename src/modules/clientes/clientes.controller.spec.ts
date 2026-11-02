@@ -9,6 +9,7 @@ describe('ClientesController', () => {
     let controller: ClientesController;
     const clientesService = {
         obtenerTodos: jest.fn(),
+        crecimiento: jest.fn(),
         buscarPorCedula: jest.fn(),
         crearCliente: jest.fn(),
         actualizar: jest.fn(),
@@ -46,6 +47,18 @@ describe('ClientesController', () => {
 
         await expect(controller.crearCliente(body)).resolves.toEqual(body);
         expect(clientesService.crearCliente).toHaveBeenCalledWith(body);
+    });
+
+    it('expone el crecimiento de clientes', async () => {
+        clientesService.crecimiento.mockResolvedValue({
+            total_general: 40,
+            altas_periodo: 2,
+            por_dia: [],
+            meta: { desde: null, hasta: null },
+        });
+
+        await request(app.getHttpServer()).get('/clientes/crecimiento').expect(200);
+        expect(clientesService.crecimiento).toHaveBeenCalled();
     });
 
     it('rechaza un id que no es UUID', async () => {

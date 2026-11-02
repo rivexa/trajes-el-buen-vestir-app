@@ -5,6 +5,7 @@ import {
     ArrayMinSize,
     IsArray,
     IsDateString,
+    IsIn,
     IsInt,
     IsNotEmpty,
     IsNumber,
@@ -111,4 +112,17 @@ export class RegistrarPagoDto {
     @IsNumber({ maxDecimalPlaces: 2 }, { message: 'El monto no puede tener más de 2 decimales.' })
     @Min(0.01, { message: 'El monto del pago debe ser mayor a 0.' })
     monto: number;
+
+    @Transform(({ value }) => recortarOpcional(value))
+    @IsOptional()
+    @IsIn(['Efectivo', 'Transferencia', 'Tarjeta de Crédito', 'Tarjeta de Débito'], {
+        message: 'El método de pago no es válido.',
+    })
+    metodo_pago?: string;
+
+    @Transform(({ value }) => recortarOpcional(value))
+    @IsOptional()
+    @IsString()
+    @MaxLength(200, { message: 'La nota no puede superar los 200 caracteres.' })
+    nota?: string;
 }
