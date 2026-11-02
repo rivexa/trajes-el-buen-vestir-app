@@ -234,7 +234,7 @@ export class DashboardService {
             .lte('fecha_pago', hastaIso)
             .limit(5000);
 
-        if (error) this.falloPersistencia(error, 'No se pudieron cargar los pagos del dashboard.');
+        if (error) this.falloTablaPagos(error, 'No se pudieron cargar los pagos del dashboard.');
         return (data ?? []) as PagoFila[];
     }
 
@@ -255,6 +255,24 @@ export class DashboardService {
 
         if (error) this.falloPersistencia(error, 'No se pudo contar los clientes.');
         return count ?? 0;
+    }
+
+    private falloTablaPagos(error: { code?: string; message?: string }, mensaje: string): never {
+        this.logger.error(`${mensaje} [${error.code ?? 'sin-codigo'}] ${error.message ?? ''}`);
+        if (this.esTablaPagosAusente(error)) {
+            throw new InternalServerErrorException(
+                'Falta la tabla orden_pagos en Supabase. Ejecute sql/001_pagos_y_crecimiento_clientes.sql y recargue el schema del API.',
+            );
+        }
+        throw new InternalServerErrorException(mensaje);
+    }
+
+    private esTablaPagosAusente(error: { code?: string; message?: string }): boolean {
+        const detalle = `${error.code ?? ''} ${error.message ?? ''}`.toLowerCase();
+        return detalle.includes('orden_pagos')
+            || detalle.includes('pgrst205')
+            || detalle.includes('does not exist')
+            || detalle.includes('schema cache');
     }
 
     private falloPersistencia(error: { code?: string; message?: string }, mensaje: string): never {
