@@ -1,6 +1,7 @@
-import { Controller, Post, Body, Get, Query, Param, Delete} from '@nestjs/common';
-import { FacturacionService } from './facturacion.service';
+import { Controller, Post, Body, Get, Query, Param, Delete, DefaultValuePipe, ParseIntPipe, ParseUUIDPipe } from '@nestjs/common';
 import { CreateFacturaDto } from './dto/factura.dto';
+import { FACTURAS_LIMITE_POR_DEFECTO, FACTURAS_PAGINA_MINIMA } from './facturacion.consulta';
+import { FacturacionService } from './facturacion.service';
 
 @Controller('facturacion')
 export class FacturacionController {
@@ -8,30 +9,30 @@ export class FacturacionController {
 
     @Get()
     async obtenerTodas(
-        @Query('page') page: string,
-        @Query('limit') limit: string,
-        @Query('search') search: string
+        @Query('page', new DefaultValuePipe(FACTURAS_PAGINA_MINIMA), ParseIntPipe) page: number,
+        @Query('limit', new DefaultValuePipe(FACTURAS_LIMITE_POR_DEFECTO), ParseIntPipe) limit: number,
+        @Query('search') search?: string,
     ) {
-        return await this.facturacionService.obtenerTodas(Number(page) || 1, Number(limit) || 10, search);
+        return this.facturacionService.obtenerTodas(page, limit, search ?? '');
     }
 
     @Post('emitir')
     async generarYEnviar(@Body() body: CreateFacturaDto) {
-        return await this.facturacionService.emitirFactura(body);
+        return this.facturacionService.emitirFactura(body);
     }
 
     @Get(':id')
-    async obtenerPorId(@Param('id') id: string) {
-        return await this.facturacionService.obtenerPorId(id);
+    async obtenerPorId(@Param('id', ParseUUIDPipe) id: string) {
+        return this.facturacionService.obtenerPorId(id);
     }
 
     @Post(':id/reintentar')
-    async reintentarSri(@Param('id') id: string) {
-        return await this.facturacionService.reintentarSri(id);
+    async reintentarSri(@Param('id', ParseUUIDPipe) id: string) {
+        return this.facturacionService.reintentarSri(id);
     }
 
     @Delete(':id')
-    async anularFactura(@Param('id') id: string) {
-        return await this.facturacionService.anularFactura(id);
+    async anularFactura(@Param('id', ParseUUIDPipe) id: string) {
+        return this.facturacionService.anularFactura(id);
     }
 }
