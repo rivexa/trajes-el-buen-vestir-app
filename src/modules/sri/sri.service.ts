@@ -4,10 +4,26 @@ import { Builder } from 'xml2js';
 import axios from 'axios';
 import { FirmaHelper } from './firma.helper';
 import { FacturaSRIDto } from './sri.interface';
+import {
+    codigoAmbienteSri,
+    resolverAmbienteSri,
+    urlAutorizacionSri,
+    urlRecepcionSri,
+    type AmbienteSri,
+} from './sri.ambiente';
+import { fechaEmisionEcuador } from './sri.fecha';
 
 @Injectable()
 export class SriService {
     constructor(private configService: ConfigService) { }
+
+    private ambienteConfigurado(): AmbienteSri {
+        try {
+            return resolverAmbienteSri(this.configService.get<string>('SRI_ENVIRONMENT'));
+        } catch (error: any) {
+            throw new InternalServerErrorException(error.message);
+        }
+    }
 
     private calcularDigitoVerificador(clave48: string): string {
         let suma = 0;
@@ -23,33 +39,24 @@ export class SriService {
         return digito.toString();
     }
 
-    private async transmitirAlSRI(xmlFirmado: string) {
-        const ambiente = this.configService.get('SRI_ENVIRONMENT');
-        const urlRecepcion = ambiente === 'pruebas'
-            ? 'https://celcer.sri.gob.ec/comprobantes-electronicos-ws/RecepcionComprobantesOffline?wsdl'
-            : 'https://cel.sri.gob.ec/comprobantes-electronicos-ws/RecepcionComprobantesOffline?wsdl';
-
-        const xmlBase64 = Buffer.from(xmlFirmado).toString('base64');
+    private async transmitirAlSRI(xmlFirmado: string, ambiente: AmbienteSri) {
         const soapEnvelope = `
             <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ec="http://ec.gob.sri.ws.recepcion">
                 <soapenv:Header/>
-                <soapenv:Body><ec:validarComprobante><xml>${xmlBase64}</xml></ec:validarComprobante></soapenv:Body>
+                <soapenv:Body><ec:validarComprobante><xml>${Buffer.from(xmlFirmado).toString('base64')}</xml></ec:validarComprobante></soapenv:Body>
             </soapenv:Envelope>`;
 
         try {
-            const respuesta = await axios.post(urlRecepcion, soapEnvelope, { headers: { 'Content-Type': 'text/xml;charset=UTF-8' } });
+            const respuesta = await axios.post(urlRecepcionSri(ambiente), soapEnvelope, {
+                headers: { 'Content-Type': 'text/xml;charset=UTF-8' },
+            });
             return respuesta.data;
-        } catch (error: any) {
+        } catch {
             throw new InternalServerErrorException('Fallo al comunicar con Recepción SRI.');
         }
     }
 
-    private async solicitarAutorizacionSRI(claveAcceso: string) {
-        const ambiente = this.configService.get('SRI_ENVIRONMENT');
-        const urlAutorizacion = ambiente === 'pruebas'
-            ? 'https://celcer.sri.gob.ec/comprobantes-electronicos-ws/AutorizacionComprobantesOffline?wsdl'
-            : 'https://cel.sri.gob.ec/comprobantes-electronicos-ws/AutorizacionComprobantesOffline?wsdl';
-
+    private async solicitarAutorizacionSRI(claveAcceso: string, ambiente: AmbienteSri) {
         const soapEnvelope = `
             <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ec="http://ec.gob.sri.ws.autorizacion">
                 <soapenv:Header/>
@@ -57,26 +64,25 @@ export class SriService {
             </soapenv:Envelope>`;
 
         try {
-            const respuesta = await axios.post(urlAutorizacion, soapEnvelope, { headers: { 'Content-Type': 'text/xml;charset=UTF-8' } });
+            const respuesta = await axios.post(urlAutorizacionSri(ambiente), soapEnvelope, {
+                headers: { 'Content-Type': 'text/xml;charset=UTF-8' },
+            });
             return respuesta.data;
-        } catch (error: any) {
+        } catch {
             throw new InternalServerErrorException('Fallo al solicitar Autorización SRI.');
         }
     }
 
     public async procesarFacturaElectronica(datos: FacturaSRIDto) {
+        const ambiente = this.ambienteConfigurado();
         const rucEmisor = '1753329182001';
-        const ambienteSRI = this.configService.get('SRI_ENVIRONMENT') === 'pruebas' ? '1' : '2';
+        const ambienteSRI = codigoAmbienteSri(ambiente);
         const tipoEmision = '1';
         const tipoComprobante = '01';
         const estab = '001';
         const ptoEmi = '001';
         const codigoNumerico = '12345678';
-
-        const fechaActual = new Date();
-        const dia = fechaActual.getDate().toString().padStart(2, '0');
-        const mes = (fechaActual.getMonth() + 1).toString().padStart(2, '0');
-        const anio = fechaActual.getFullYear().toString();
+        const { dia, mes, anio, fechaEmision } = fechaEmisionEcuador();
 
         const clave48 = `${dia}${mes}${anio}${tipoComprobante}${rucEmisor}${ambienteSRI}${estab}${ptoEmi}${datos.secuencial}${codigoNumerico}${tipoEmision}`;
         const claveAccesoOficial = `${clave48}${this.calcularDigitoVerificador(clave48)}`;
@@ -98,7 +104,7 @@ export class SriService {
                     dirMatriz: 'Quito, Ecuador',
                 },
                 infoFactura: {
-                    fechaEmision: `${dia}/${mes}/${anio}`,
+                    fechaEmision,
                     dirEstablecimiento: 'Quito, Ecuador',
                     obligadoContabilidad: 'NO',
                     tipoIdentificacionComprador: datos.cliente.tipoIdentificacion,
@@ -134,10 +140,10 @@ export class SriService {
         const passwordFirma = this.configService.get<string>('SRI_CERT_PASSWORD');
         const xmlFirmadoFinal = await FirmaHelper.firmarXML(xmlCrudo, passwordFirma!);
 
-        await this.transmitirAlSRI(xmlFirmadoFinal);
+        await this.transmitirAlSRI(xmlFirmadoFinal, ambiente);
         await new Promise(resolve => setTimeout(resolve, 2000));
 
-        const respuestaAutorizacion = await this.solicitarAutorizacionSRI(claveAccesoOficial);
+        const respuestaAutorizacion = await this.solicitarAutorizacionSRI(claveAccesoOficial, ambiente);
         const autorizada = respuestaAutorizacion.includes('<estado>AUTORIZADO</estado>');
 
         return {
