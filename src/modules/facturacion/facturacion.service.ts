@@ -170,17 +170,34 @@ export class FacturacionService implements OnModuleInit, OnModuleDestroy {
             })),
         };
 
+        let resultadoSri;
         try {
-            const resultadoSri = await this.sriService.procesarFacturaElectronica(sriDto);
-            await this.persistirResultadoSri(factura.id, secuencialFormateado, resultadoSri);
-            return { ...factura, sri: resultadoSri };
+            resultadoSri = await this.sriService.procesarFacturaElectronica(sriDto);
         } catch (sriError: any) {
-            await supabase.from('facturas').update({
-                estado_sri: 'ERROR_CONEXION',
-                mensaje_sri: sriError.message || 'Error desconocido al firmar o transmitir.',
-            }).eq('id', factura.id);
+            await this.marcarErrorConexion(
+                factura.id,
+                sriError.message || 'Error desconocido al firmar o transmitir.',
+            );
             return { ...factura, sri: { exito: false, mensaje: 'Registrada localmente, falló conexión con SRI.' } };
         }
+
+        try {
+            await this.persistirResultadoSri(factura.id, secuencialFormateado, resultadoSri);
+        } catch (persistError: any) {
+            this.logger.error(
+                `SRI respondió (${resultadoSri.estado}) pero no se pudo persistir factura ${factura.id}: ${persistError?.message || persistError}`,
+            );
+            return {
+                ...factura,
+                sri: {
+                    ...resultadoSri,
+                    mensaje: resultadoSri.mensaje
+                        || 'El SRI respondió, pero no se pudo guardar el resultado en la base.',
+                },
+            };
+        }
+
+        return { ...factura, sri: resultadoSri };
     }
 
     async obtenerPorId(id: string) {
@@ -451,6 +468,21 @@ export class FacturacionService implements OnModuleInit, OnModuleDestroy {
         }).eq('id', facturaId);
 
         if (error) this.falloPersistencia(error, 'No se pudo guardar el resultado del SRI.');
+    }
+
+    private async marcarErrorConexion(facturaId: string, mensaje: string) {
+        const { error } = await this.supabaseService.getClient().from('facturas').update({
+            estado_sri: 'ERROR_CONEXION',
+            mensaje_sri: mensaje,
+        }).eq('id', facturaId);
+
+        if (error) {
+            // Si aún no existe mensaje_sri, al menos deja el estado.
+            this.logger.error(`No se pudo marcar ERROR_CONEXION [${error.code}] ${error.message}`);
+            await this.supabaseService.getClient().from('facturas').update({
+                estado_sri: 'ERROR_CONEXION',
+            }).eq('id', facturaId);
+        }
     }
 
     private idsOrdenes(dto: CreateFacturaDto): string[] {
