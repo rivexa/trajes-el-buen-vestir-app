@@ -59,6 +59,7 @@ describe('FacturacionService', () => {
     };
     const sriService = {
         procesarFacturaElectronica: jest.fn().mockResolvedValue(resultadoSriOk),
+        consultarAutorizacion: jest.fn().mockResolvedValue(resultadoSriOk),
     };
 
     beforeEach(async () => {
@@ -74,6 +75,7 @@ describe('FacturacionService', () => {
         service = module.get(FacturacionService);
         jest.clearAllMocks();
         sriService.procesarFacturaElectronica.mockResolvedValue(resultadoSriOk);
+        sriService.consultarAutorizacion.mockResolvedValue(resultadoSriOk);
     });
 
     it('debe construirse con el mock de Supabase', () => {
@@ -481,5 +483,36 @@ describe('FacturacionService', () => {
             claveAcceso: clave,
             xmlFirmado,
         }));
+    });
+
+    it('si está PROCESANDO solo consulta autorización sin retransmitir', async () => {
+        const clave = '2'.repeat(49);
+        const xmlFirmado = '<factura id="comprobante">firmada</factura>';
+        const facturas = consultaSupabase(
+            {
+                data: {
+                    id: FACTURA_ID,
+                    estado_sri: 'PROCESANDO',
+                    secuencial_local: 8,
+                    subtotal_factura: 200,
+                    metodo_pago: 'Efectivo',
+                    clave_acceso_sri: clave,
+                    xml_url: xmlFirmado,
+                    clientes: { ...cliente, correo: 'juan@example.com' },
+                    factura_detalles: [detalleOrden],
+                },
+                error: null,
+            },
+            { data: null, error: null },
+        );
+        from.mockReturnValue(facturas);
+
+        await service.reintentarSri(FACTURA_ID);
+
+        expect(sriService.consultarAutorizacion).toHaveBeenCalledWith({
+            claveAcceso: clave,
+            xmlFirmado,
+        });
+        expect(sriService.procesarFacturaElectronica).not.toHaveBeenCalled();
     });
 });
