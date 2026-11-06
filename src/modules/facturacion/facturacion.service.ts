@@ -1,4 +1,13 @@
-import { Injectable, InternalServerErrorException, NotFoundException, BadRequestException, ConflictException, Logger } from '@nestjs/common';
+import {
+    Injectable,
+    InternalServerErrorException,
+    NotFoundException,
+    BadRequestException,
+    ConflictException,
+    Logger,
+    OnModuleDestroy,
+    OnModuleInit,
+} from '@nestjs/common';
 import { SupabaseService } from '../../config/supabase.service';
 import { CreateFacturaDto, FacturaDetalleDto } from './dto/factura.dto';
 import { acotarPaginacionFacturas, sanitizarBusquedaFactura } from './facturacion.consulta';
@@ -9,14 +18,29 @@ import { esXmlComprobanteFactura } from '../sri/sri.respuesta';
 import { parsearRideDesdeXml } from './ride/ride.parser';
 import { generarRidePdf } from './ride/ride.pdf';
 
+/** Reconsulta periódica de facturas en PROCESANDO. */
+const INTERVALO_CONSULTA_PROCESANDO_MS = 60_000;
+
 @Injectable()
-export class FacturacionService {
+export class FacturacionService implements OnModuleInit, OnModuleDestroy {
     private readonly logger = new Logger(FacturacionService.name);
+    private timerProcesando?: NodeJS.Timeout;
+    private consultandoProcesando = false;
 
     constructor(
         private readonly supabaseService: SupabaseService,
         private readonly sriService: SriService
     ) { }
+
+    onModuleInit() {
+        this.timerProcesando = setInterval(() => {
+            void this.resolverFacturasProcesando();
+        }, INTERVALO_CONSULTA_PROCESANDO_MS);
+    }
+
+    onModuleDestroy() {
+        if (this.timerProcesando) clearInterval(this.timerProcesando);
+    }
 
     async obtenerTodas(page?: number, limit?: number, search = '') {
         const { page: pagina, limit: tamano } = acotarPaginacionFacturas(page, limit);
@@ -294,11 +318,31 @@ export class FacturacionService {
             throw new BadRequestException('La factura ya está autorizada, no se puede reintentar.');
         }
 
-        const identificacion = factura.clientes.cedula_ruc;
-        const tipoIdentificacion = identificacion.length === 13 ? '04' : (identificacion.length === 10 ? '05' : '06');
         const secuencialFormateado = (factura.secuencial_local || 1).toString().padStart(9, '0');
         const xmlGuardado = typeof factura.xml_url === 'string' ? factura.xml_url : undefined;
-        const claveGuardada = typeof factura.clave_acceso_sri === 'string' ? factura.clave_acceso_sri : undefined;
+        const claveGuardada = typeof factura.clave_acceso_sri === 'string' ? factura.clave_acceso_sri.trim() : '';
+        const xmlFirmado = esXmlComprobanteFactura(xmlGuardado) ? xmlGuardado : undefined;
+
+        // Ya en PROCESANDO con clave: solo consultar autorización (no retransmitir).
+        if (claveGuardada && factura.estado_sri === 'PROCESANDO') {
+            try {
+                const resultadoSri = await this.sriService.consultarAutorizacion({
+                    claveAcceso: claveGuardada,
+                    xmlFirmado,
+                });
+                await this.persistirResultadoSri(factura.id, secuencialFormateado, resultadoSri);
+                return { mensaje: 'Consulta de autorización finalizada', sri: resultadoSri };
+            } catch (sriError: any) {
+                await supabase.from('facturas').update({
+                    estado_sri: 'ERROR_CONEXION',
+                    mensaje_sri: sriError.message || 'Fallo de conexión.',
+                }).eq('id', factura.id);
+                return { mensaje: 'El SRI sigue sin responder.', sri: { exito: false } };
+            }
+        }
+
+        const identificacion = factura.clientes.cedula_ruc;
+        const tipoIdentificacion = identificacion.length === 13 ? '04' : (identificacion.length === 10 ? '05' : '06');
 
         const sriDto: FacturaSRIDto = {
             secuencial: secuencialFormateado,
@@ -312,7 +356,7 @@ export class FacturacionService {
             subtotal: factura.subtotal_factura,
             metodoPago: factura.metodo_pago || 'Efectivo',
             claveAcceso: claveGuardada || undefined,
-            xmlFirmado: esXmlComprobanteFactura(xmlGuardado) ? xmlGuardado : undefined,
+            xmlFirmado,
             items: factura.factura_detalles.map((detalle: { descripcion: string; cantidad: number; precio_unitario: number }, index: number) => ({
                 codigoPrincipal: `P-${(index + 1).toString().padStart(3, '0')}`,
                 descripcion: detalle.descripcion,
@@ -332,6 +376,56 @@ export class FacturacionService {
                 mensaje_sri: sriError.message || 'Fallo de conexión.',
             }).eq('id', factura.id);
             return { mensaje: 'El SRI sigue sin responder.', sri: { exito: false } };
+        }
+    }
+
+    /** Job: vuelve a consultar al SRI las facturas atascadas en PROCESANDO. */
+    async resolverFacturasProcesando() {
+        if (this.consultandoProcesando) return { revisadas: 0, actualizadas: 0 };
+        this.consultandoProcesando = true;
+
+        try {
+            const supabase = this.supabaseService.getClient();
+            const { data, error } = await supabase
+                .from('facturas')
+                .select('id, secuencial_local, clave_acceso_sri, xml_url, estado_sri')
+                .eq('estado_sri', 'PROCESANDO')
+                .not('clave_acceso_sri', 'is', null)
+                .limit(20);
+
+            if (error) {
+                this.logger.warn(`No se pudieron listar facturas PROCESANDO: ${error.message}`);
+                return { revisadas: 0, actualizadas: 0 };
+            }
+
+            const pendientes = (data ?? []).filter((f) => String(f.clave_acceso_sri || '').trim());
+            let actualizadas = 0;
+
+            for (const factura of pendientes) {
+                try {
+                    const secuencialFormateado = (factura.secuencial_local || 1).toString().padStart(9, '0');
+                    const xmlGuardado = typeof factura.xml_url === 'string' ? factura.xml_url : undefined;
+                    const resultado = await this.sriService.consultarAutorizacion({
+                        claveAcceso: String(factura.clave_acceso_sri),
+                        xmlFirmado: esXmlComprobanteFactura(xmlGuardado) ? xmlGuardado : undefined,
+                    });
+
+                    if (resultado.estado === 'PENDIENTE') continue;
+
+                    await this.persistirResultadoSri(factura.id, secuencialFormateado, resultado);
+                    actualizadas += 1;
+                } catch (err: any) {
+                    this.logger.warn(`Consulta SRI falló para factura ${factura.id}: ${err?.message || err}`);
+                }
+            }
+
+            if (pendientes.length > 0) {
+                this.logger.log(`SRI pendientes: revisadas=${pendientes.length} actualizadas=${actualizadas}`);
+            }
+
+            return { revisadas: pendientes.length, actualizadas };
+        } finally {
+            this.consultandoProcesando = false;
         }
     }
 

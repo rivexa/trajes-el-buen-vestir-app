@@ -62,7 +62,8 @@ describe('SriService', () => {
 
     async function procesar(datos: FacturaSRIDto = facturaBase) {
         const promesa = service.procesarFacturaElectronica(datos);
-        await jest.advanceTimersByTimeAsync(2500);
+        // Emisión: espera inicial + hasta 8 intentos con pausas entre ellos.
+        await jest.advanceTimersByTimeAsync(30_000);
         return promesa;
     }
 
@@ -146,5 +147,41 @@ describe('SriService', () => {
             xmlAutorizado: null,
         });
         expect(resultado.claveAcceso).toHaveLength(49);
+    });
+
+    it('reintenta autorización hasta AUTORIZADO si el SRI responde PENDIENTE', async () => {
+        axiosPost
+            .mockResolvedValueOnce({ data: '<estado>RECIBIDA</estado>' })
+            .mockResolvedValueOnce({ data: '<estado>PENDIENTE</estado>' })
+            .mockResolvedValueOnce({ data: '<estado>PENDIENTE</estado>' })
+            .mockResolvedValueOnce({
+                data: `<estado>AUTORIZADO</estado><comprobante><![CDATA[${comprobanteAutorizado}]]></comprobante>`,
+            });
+
+        const resultado = await procesar();
+
+        expect(resultado.estado).toBe('AUTORIZADO');
+        expect(resultado.xmlAutorizado).toBe(comprobanteAutorizado);
+        expect(axiosPost).toHaveBeenCalledTimes(4);
+    });
+
+    it('consulta autorización sin reenviar recepción', async () => {
+        const clave = '2'.repeat(49);
+        axiosPost.mockResolvedValueOnce({
+            data: `<estado>AUTORIZADO</estado><comprobante><![CDATA[${comprobanteAutorizado}]]></comprobante>`,
+        });
+
+        const promesa = service.consultarAutorizacion({ claveAcceso: clave, xmlFirmado });
+        await jest.advanceTimersByTimeAsync(10_000);
+        const resultado = await promesa;
+
+        expect(resultado.estado).toBe('AUTORIZADO');
+        expect(axiosPost).toHaveBeenCalledTimes(1);
+        expect(axiosPost).toHaveBeenCalledWith(
+            expect.stringMatching(/Autorizacion/i),
+            expect.stringContaining(clave),
+            expect.any(Object),
+        );
+        expect(firmarXml).not.toHaveBeenCalled();
     });
 });

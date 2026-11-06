@@ -13,6 +13,12 @@ import {
 } from './sri.ambiente';
 import { fechaEmisionEcuador } from './sri.fecha';
 import {
+    SRI_AUTH_ESPERA_ENTRE_MS,
+    SRI_AUTH_ESPERA_INICIAL_MS,
+    SRI_AUTH_INTENTOS_CONSULTA,
+    SRI_AUTH_INTENTOS_EMISION,
+} from './sri.autorizacion';
+import {
     codigoFormaPago,
     codigoNumericoAleatorio,
     codigoNumericoDesdeClave,
@@ -25,6 +31,10 @@ import {
 @Injectable()
 export class SriService {
     constructor(private configService: ConfigService) { }
+
+    private esperar(ms: number) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    }
 
     private ambienteConfigurado(): AmbienteSri {
         try {
@@ -212,41 +222,13 @@ export class SriService {
                 };
             }
 
-            await new Promise((resolve) => setTimeout(resolve, 2000));
-            const respuestaAutorizacion = await this.solicitarAutorizacionSRI(claveAccesoOficial, ambiente);
-            const autorizacion = estadoAutorizacionSri(respuestaAutorizacion);
-
-            if (autorizacion === 'AUTORIZADO') {
-                const comprobante = extraerComprobanteAutorizado(respuestaAutorizacion);
-                return {
-                    exito: true,
-                    estado: 'AUTORIZADO',
-                    claveAcceso: claveAccesoOficial,
-                    xmlFirmado,
-                    xmlAutorizado: comprobante ?? xmlFirmado,
-                    mensaje: 'Autorizado',
-                };
-            }
-
-            if (autorizacion === 'PENDIENTE') {
-                return {
-                    exito: false,
-                    estado: 'PENDIENTE',
-                    claveAcceso: claveAccesoOficial,
-                    xmlFirmado,
-                    xmlAutorizado: null,
-                    mensaje: 'Comprobante recibido; autorización pendiente en el SRI.',
-                };
-            }
-
-            return {
-                exito: false,
-                estado: 'RECHAZADO',
+            return this.consultarAutorizacionConReintentos({
                 claveAcceso: claveAccesoOficial,
                 xmlFirmado,
-                xmlAutorizado: null,
-                mensaje: 'Rechazado por validaciones del SRI.',
-            };
+                ambiente,
+                intentos: SRI_AUTH_INTENTOS_EMISION,
+                esperaInicialMs: SRI_AUTH_ESPERA_INICIAL_MS,
+            });
         } catch {
             return {
                 exito: false,
@@ -257,5 +239,115 @@ export class SriService {
                 mensaje: 'Fallo al comunicar con el SRI.',
             };
         }
+    }
+
+    /**
+     * Solo consulta autorización (sin reenviar recepción).
+     * Para facturas ya en PROCESANDO con clave de acceso.
+     */
+    public async consultarAutorizacion(params: {
+        claveAcceso: string;
+        xmlFirmado?: string | null;
+        intentos?: number;
+    }): Promise<ResultadoSri> {
+        const ambiente = this.ambienteConfigurado();
+        const claveAcceso = params.claveAcceso.trim();
+        const xmlFirmado = params.xmlFirmado?.trim() || '';
+
+        if (!claveAcceso) {
+            return {
+                exito: false,
+                estado: 'ERROR_CONEXION',
+                claveAcceso: '',
+                xmlFirmado,
+                xmlAutorizado: null,
+                mensaje: 'La factura no tiene clave de acceso para consultar al SRI.',
+            };
+        }
+
+        return this.consultarAutorizacionConReintentos({
+            claveAcceso,
+            xmlFirmado,
+            ambiente,
+            intentos: params.intentos ?? SRI_AUTH_INTENTOS_CONSULTA,
+            esperaInicialMs: 0,
+        });
+    }
+
+    private async consultarAutorizacionConReintentos(params: {
+        claveAcceso: string;
+        xmlFirmado: string;
+        ambiente: AmbienteSri;
+        intentos: number;
+        esperaInicialMs: number;
+    }): Promise<ResultadoSri> {
+        const { claveAcceso, xmlFirmado, ambiente, intentos, esperaInicialMs } = params;
+
+        if (esperaInicialMs > 0) {
+            await this.esperar(esperaInicialMs);
+        }
+
+        let ultimoErrorConexion = false;
+
+        for (let intento = 0; intento < intentos; intento++) {
+            try {
+                const respuestaAutorizacion = await this.solicitarAutorizacionSRI(claveAcceso, ambiente);
+                const autorizacion = estadoAutorizacionSri(respuestaAutorizacion);
+                ultimoErrorConexion = false;
+
+                if (autorizacion === 'AUTORIZADO') {
+                    const comprobante = extraerComprobanteAutorizado(respuestaAutorizacion);
+                    return {
+                        exito: true,
+                        estado: 'AUTORIZADO',
+                        claveAcceso,
+                        xmlFirmado,
+                        xmlAutorizado: comprobante ?? (xmlFirmado || null),
+                        mensaje: 'Autorizado',
+                    };
+                }
+
+                if (autorizacion === 'PENDIENTE') {
+                    if (intento < intentos - 1) {
+                        await this.esperar(SRI_AUTH_ESPERA_ENTRE_MS);
+                    }
+                    continue;
+                }
+
+                return {
+                    exito: false,
+                    estado: 'RECHAZADO',
+                    claveAcceso,
+                    xmlFirmado,
+                    xmlAutorizado: null,
+                    mensaje: 'Rechazado por validaciones del SRI.',
+                };
+            } catch {
+                ultimoErrorConexion = true;
+                if (intento < intentos - 1) {
+                    await this.esperar(SRI_AUTH_ESPERA_ENTRE_MS);
+                }
+            }
+        }
+
+        if (ultimoErrorConexion) {
+            return {
+                exito: false,
+                estado: 'ERROR_CONEXION',
+                claveAcceso,
+                xmlFirmado,
+                xmlAutorizado: null,
+                mensaje: 'Fallo al consultar autorización en el SRI.',
+            };
+        }
+
+        return {
+            exito: false,
+            estado: 'PENDIENTE',
+            claveAcceso,
+            xmlFirmado,
+            xmlAutorizado: null,
+            mensaje: 'Comprobante recibido; autorización pendiente en el SRI.',
+        };
     }
 }
