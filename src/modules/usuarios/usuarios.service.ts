@@ -22,4 +22,19 @@ export class UsuariosService {
 
         return (data as UsuarioRegistro | null) ?? null;
     }
+
+    async buscarPorId(id: string): Promise<UsuarioRegistro | null> {
+        const { data, error } = await this.supabaseService.getClient()
+            .from('usuarios')
+            .select('id, usuario, password_hash, nombre, rol, activo, created_at, updated_at')
+            .eq('id', id)
+            .maybeSingle();
+
+        if (error) {
+            this.logger.error(`No se pudo consultar usuario por id [${error.code}] ${error.message}`);
+            throw new InternalServerErrorException('No se pudo validar la sesión.');
+        }
+
+        return (data as UsuarioRegistro | null) ?? null;
+    }
 }

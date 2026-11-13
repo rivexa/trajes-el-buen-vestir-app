@@ -1,6 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ClientesController } from './clientes.controller';
 import { ClientesService } from './clientes.service';
 
@@ -20,7 +21,10 @@ describe('ClientesController', () => {
         const module: TestingModule = await Test.createTestingModule({
             controllers: [ClientesController],
             providers: [{ provide: ClientesService, useValue: clientesService }],
-        }).compile();
+        })
+            .overrideGuard(JwtAuthGuard)
+            .useValue({ canActivate: () => true })
+            .compile();
 
         controller = module.get(ClientesController);
         app = module.createNestApplication();
