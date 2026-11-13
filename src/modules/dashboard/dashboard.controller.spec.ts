@@ -1,7 +1,6 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { DashboardController } from './dashboard.controller';
 import { DashboardService } from './dashboard.service';
 
@@ -15,10 +14,7 @@ describe('DashboardController', () => {
         const module: TestingModule = await Test.createTestingModule({
             controllers: [DashboardController],
             providers: [{ provide: DashboardService, useValue: dashboardService }],
-        })
-            .overrideGuard(JwtAuthGuard)
-            .useValue({ canActivate: () => true })
-            .compile();
+        }).compile();
 
         app = module.createNestApplication();
         app.useGlobalPipes(new ValidationPipe({

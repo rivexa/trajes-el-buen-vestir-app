@@ -1,9 +1,10 @@
 import { ExecutionContext, INestApplication, UnauthorizedException, ValidationPipe } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
-import { JwtAuthGuard } from './jwt-auth.guard';
+import { IS_PUBLIC_KEY } from './public.decorator';
 
 describe('AuthController', () => {
     let app: INestApplication;
@@ -14,22 +15,30 @@ describe('AuthController', () => {
     beforeEach(async () => {
         const module: TestingModule = await Test.createTestingModule({
             controllers: [AuthController],
-            providers: [{ provide: AuthService, useValue: authService }],
-        })
-            .overrideGuard(JwtAuthGuard)
-            .useValue({
-                canActivate: (context: ExecutionContext) => {
-                    const request = context.switchToHttp().getRequest();
-                    request.user = {
-                        id: '1',
-                        usuario: 'admin',
-                        nombre: 'Admin Sistema',
-                        rol: 'admin',
-                    };
-                    return true;
+            providers: [
+                { provide: AuthService, useValue: authService },
+                {
+                    provide: APP_GUARD,
+                    useValue: {
+                        canActivate: (context: ExecutionContext) => {
+                            const handler = context.getHandler();
+                            const isPublic = Reflect.getMetadata(IS_PUBLIC_KEY, handler);
+                            if (isPublic) {
+                                return true;
+                            }
+                            const request = context.switchToHttp().getRequest();
+                            request.user = {
+                                id: '1',
+                                usuario: 'admin',
+                                nombre: 'Admin Sistema',
+                                rol: 'admin',
+                            };
+                            return true;
+                        },
+                    },
                 },
-            })
-            .compile();
+            ],
+        }).compile();
 
         app = module.createNestApplication();
         app.useGlobalPipes(new ValidationPipe({
