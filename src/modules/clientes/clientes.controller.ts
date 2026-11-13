@@ -1,9 +1,11 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query, DefaultValuePipe, ParseIntPipe, ParseUUIDPipe } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, DefaultValuePipe, ParseIntPipe, ParseUUIDPipe, UseGuards } from '@nestjs/common';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CLIENTES_LIMITE_POR_DEFECTO, CLIENTES_PAGINA_MINIMA } from './clientes.consulta';
 import { ClientesService } from './clientes.service';
 import { CreateClienteDto, UpdateClienteDto } from './dto/cliente.dto';
 
 @Controller('clientes')
+@UseGuards(JwtAuthGuard)
 export class ClientesController {
     constructor(private readonly clientesService: ClientesService) { }
 

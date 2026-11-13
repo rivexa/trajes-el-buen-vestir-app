@@ -1,8 +1,9 @@
-import { INestApplication, UnauthorizedException, ValidationPipe } from '@nestjs/common';
+import { ExecutionContext, INestApplication, UnauthorizedException, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { JwtAuthGuard } from './jwt-auth.guard';
 
 describe('AuthController', () => {
     let app: INestApplication;
@@ -14,7 +15,21 @@ describe('AuthController', () => {
         const module: TestingModule = await Test.createTestingModule({
             controllers: [AuthController],
             providers: [{ provide: AuthService, useValue: authService }],
-        }).compile();
+        })
+            .overrideGuard(JwtAuthGuard)
+            .useValue({
+                canActivate: (context: ExecutionContext) => {
+                    const request = context.switchToHttp().getRequest();
+                    request.user = {
+                        id: '1',
+                        usuario: 'admin',
+                        nombre: 'Admin Sistema',
+                        rol: 'admin',
+                    };
+                    return true;
+                },
+            })
+            .compile();
 
         app = module.createNestApplication();
         app.useGlobalPipes(new ValidationPipe({
@@ -72,5 +87,18 @@ describe('AuthController', () => {
             .send({})
             .expect(400);
         expect(authService.login).not.toHaveBeenCalled();
+    });
+
+    it('GET /auth/me devuelve el usuario autenticado', async () => {
+        const respuesta = await request(app.getHttpServer())
+            .get('/auth/me')
+            .expect(200);
+
+        expect(respuesta.body).toEqual({
+            id: '1',
+            nombre: 'Admin Sistema',
+            rol: 'admin',
+            usuario: 'admin',
+        });
     });
 });
