@@ -5,6 +5,7 @@ import { ClientesModule } from './modules/clientes/clientes.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { OrdenesModule } from './modules/ordenes/ordenes.module';
 import { FacturacionModule } from './modules/facturacion/facturacion.module';
+import { UsuariosModule } from './modules/usuarios/usuarios.module';
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { FacturacionModule } from './modules/facturacion/facturacion.module';
       isGlobal: true,
     }),
     SupabaseModule,
+    UsuariosModule,
     ClientesModule,
     OrdenesModule,
     FacturacionModule,
