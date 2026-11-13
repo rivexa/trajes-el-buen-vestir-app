@@ -1,8 +1,8 @@
 import { Module } from '@nestjs/common';
+import { UsuariosService } from './usuarios.service';
 
-/**
- * Dominio de usuarios del panel.
- * Commit 1: solo modelo/schema. El service y endpoints llegan con auth.
- */
-@Module({})
+@Module({
+    providers: [UsuariosService],
+    exports: [UsuariosService],
+})
 export class UsuariosModule { }
