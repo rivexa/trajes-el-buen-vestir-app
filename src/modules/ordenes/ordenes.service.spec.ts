@@ -13,7 +13,7 @@ function consultaSupabase(...resultados: ResultadoConsulta[]) {
     const cola = [...resultados];
     const consulta: any = {};
     for (const metodo of [
-        'select', 'insert', 'update', 'delete', 'eq', 'gte', 'lte', 'or', 'order', 'range', 'limit', 'single',
+        'select', 'insert', 'update', 'delete', 'eq', 'in', 'gte', 'lte', 'or', 'order', 'range', 'limit', 'single',
     ]) {
         consulta[metodo] = jest.fn().mockReturnValue(consulta);
     }
@@ -28,6 +28,7 @@ function consultaSupabase(...resultados: ResultadoConsulta[]) {
 }
 
 const ORDEN_ID = '33333333-3333-4333-8333-333333333333';
+const DETALLE_ID = '66666666-6666-4666-8666-666666666666';
 
 describe('OrdenesService', () => {
     let service: OrdenesService;
@@ -50,9 +51,13 @@ describe('OrdenesService', () => {
 
     it('registra el pago en historial y actualiza el abono', async () => {
         const ordenes = consultaSupabase(
-            { data: { abono: 50, saldo: 150, subtotal: 200, estado: 'Pendiente' }, error: null },
+            { data: { abono: 50, saldo: 150, subtotal: 200 }, error: null },
             { data: { abono: 100, saldo: 100 }, error: null },
         );
+        const detalles = consultaSupabase({
+            data: [{ estado: 'Pendiente' }],
+            error: null,
+        });
         const pagos = consultaSupabase({
             data: {
                 id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -63,7 +68,11 @@ describe('OrdenesService', () => {
             },
             error: null,
         });
-        from.mockImplementation((tabla: string) => (tabla === 'orden_pagos' ? pagos : ordenes));
+        from.mockImplementation((tabla: string) => {
+            if (tabla === 'orden_pagos') return pagos;
+            if (tabla === 'orden_detalles') return detalles;
+            return ordenes;
+        });
 
         await expect(service.registrarPago(ORDEN_ID, 50, {
             metodo_pago: 'Transferencia',
@@ -82,21 +91,43 @@ describe('OrdenesService', () => {
     });
 
     it('responde 400 si el pago supera el saldo', async () => {
-        from.mockReturnValue(consultaSupabase({
-            data: { abono: 50, saldo: 20, subtotal: 70, estado: 'Pendiente' },
+        const ordenes = consultaSupabase({
+            data: { abono: 50, saldo: 20, subtotal: 70 },
             error: null,
-        }));
+        });
+        const detalles = consultaSupabase({ data: [{ estado: 'Pendiente' }], error: null });
+        from.mockImplementation((tabla: string) => (tabla === 'orden_detalles' ? detalles : ordenes));
 
         await expect(service.registrarPago(ORDEN_ID, 50)).rejects.toBeInstanceOf(BadRequestException);
     });
 
-    it('responde 409 si la orden está anulada', async () => {
-        from.mockReturnValue(consultaSupabase({
-            data: { abono: 0, saldo: 100, subtotal: 100, estado: 'Anulada' },
+    it('responde 409 si todas las líneas están anuladas', async () => {
+        const ordenes = consultaSupabase({
+            data: { abono: 0, saldo: 100, subtotal: 100 },
             error: null,
-        }));
+        });
+        const detalles = consultaSupabase({
+            data: [{ estado: 'Anulada' }, { estado: 'Anulada' }],
+            error: null,
+        });
+        from.mockImplementation((tabla: string) => (tabla === 'orden_detalles' ? detalles : ordenes));
 
         await expect(service.registrarPago(ORDEN_ID, 10)).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('actualiza el estado de una línea', async () => {
+        const detalles = consultaSupabase(
+            { data: { id: DETALLE_ID, orden_id: ORDEN_ID, estado: 'Pendiente' }, error: null },
+            { data: { id: DETALLE_ID, orden_id: ORDEN_ID, estado: 'Terminado' }, error: null },
+        );
+        from.mockReturnValue(detalles);
+
+        await expect(service.actualizarEstadoDetalle(ORDEN_ID, DETALLE_ID, 'Terminado'))
+            .resolves.toEqual(expect.objectContaining({
+                mensaje: 'Estado de la línea actualizado correctamente',
+                detalle: expect.objectContaining({ estado: 'Terminado' }),
+            }));
+        expect(detalles.update).toHaveBeenCalledWith({ estado: 'Terminado' });
     });
 
     it('agrupa el historial de pagos por día en Ecuador', async () => {
@@ -107,7 +138,7 @@ describe('OrdenesService', () => {
                     orden_id: ORDEN_ID,
                     monto: 30,
                     metodo_pago: 'Efectivo',
-                    fecha_pago: '2026-03-15T03:30:00.000Z', // 14/03 en Ecuador
+                    fecha_pago: '2026-03-15T03:30:00.000Z',
                     ordenes_pedido: { numero_orden: 8, cliente_id: 'c1' },
                 },
                 {
@@ -115,7 +146,7 @@ describe('OrdenesService', () => {
                     orden_id: ORDEN_ID,
                     monto: 20,
                     metodo_pago: 'Efectivo',
-                    fecha_pago: '2026-03-14T20:00:00.000Z', // 14/03 en Ecuador
+                    fecha_pago: '2026-03-14T20:00:00.000Z',
                     ordenes_pedido: { numero_orden: 8, cliente_id: 'c1' },
                 },
             ],

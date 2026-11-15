@@ -4,10 +4,11 @@ import { validate } from 'class-validator';
 import { CreateOrdenDto, RegistrarPagoDto } from './orden.dto';
 
 const detalleValido = {
-    tipo_item: 'Traje',
+    tipo_item: 'Confección a Medida',
     descripcion: 'Traje de lino',
     cantidad: 1,
     precio_unitario: 200,
+    fecha_entrega: '2026-04-01',
 };
 
 const ordenValida = {
@@ -24,6 +25,30 @@ describe('CreateOrdenDto', () => {
     it('acepta una orden con un detalle y sin abono', async () => {
         const { errors } = await validarOrden(ordenValida);
         expect(errors).toHaveLength(0);
+    });
+
+    it('normaliza Otro a Venta', async () => {
+        const { dto, errors } = await validarOrden({
+            ...ordenValida,
+            detalles: [{ ...detalleValido, tipo_item: 'Otro' }],
+        });
+        expect(errors).toHaveLength(0);
+        expect(dto.detalles[0].tipo_item).toBe('Venta');
+    });
+
+    it('acepta fecha_entrega_default sin fecha por línea', async () => {
+        const { dto, errors } = await validarOrden({
+            ...ordenValida,
+            fecha_entrega_default: '2026-05-10',
+            detalles: [{
+                tipo_item: 'Venta',
+                descripcion: 'Camisa',
+                cantidad: 1,
+                precio_unitario: 40,
+            }],
+        });
+        expect(errors).toHaveLength(0);
+        expect(dto.fecha_entrega_default).toBe('2026-05-10');
     });
 
     it('rechaza una orden sin detalles', async () => {
@@ -62,6 +87,14 @@ describe('CreateOrdenDto', () => {
         const { errors } = await validarOrden({
             ...ordenValida,
             detalles: [{ ...detalleValido, imagen_referencia_url: 'javascript:alert(1)' }],
+        });
+        expect(errors.some((error) => error.property === 'detalles')).toBe(true);
+    });
+
+    it('rechaza un tipo de ítem fuera del catálogo', async () => {
+        const { errors } = await validarOrden({
+            ...ordenValida,
+            detalles: [{ ...detalleValido, tipo_item: 'Inventado' }],
         });
         expect(errors.some((error) => error.property === 'detalles')).toBe(true);
     });

@@ -1,6 +1,11 @@
 import { Transform, Type } from 'class-transformer';
 import { subtotalDetalles } from '../ordenes.dinero';
 import {
+    ESTADOS_DETALLE_ORDEN,
+    TIPOS_ITEM_ORDEN,
+    normalizarTipoItem,
+} from '../ordenes.dominio';
+import {
     ArrayMaxSize,
     ArrayMinSize,
     IsArray,
@@ -51,11 +56,25 @@ export class AbonoNoSuperaSubtotal implements ValidatorConstraintInterface {
     }
 }
 
+@ValidatorConstraint({ name: 'tipoItemOrden', async: false })
+export class TipoItemOrdenValido implements ValidatorConstraintInterface {
+    validate(valor: string) {
+        return typeof valor === 'string' && normalizarTipoItem(valor) !== null;
+    }
+
+    defaultMessage() {
+        return `El tipo de ítem debe ser uno de: ${TIPOS_ITEM_ORDEN.join(', ')}.`;
+    }
+}
+
 export class OrdenDetalleDto {
-    @Transform(({ value }) => recortarTexto(value))
+    @Transform(({ value }) => {
+        if (typeof value !== 'string') return value;
+        return normalizarTipoItem(value.trim()) ?? value.trim();
+    })
     @IsString()
     @IsNotEmpty({ message: 'El tipo de ítem es obligatorio.' })
-    @MaxLength(40, { message: 'El tipo de ítem no puede superar los 40 caracteres.' })
+    @Validate(TipoItemOrdenValido)
     tipo_item: string;
 
     @Transform(({ value }) => recortarTexto(value))
@@ -76,6 +95,18 @@ export class OrdenDetalleDto {
 
     @Transform(({ value }) => recortarOpcional(value))
     @IsOptional()
+    @IsIn([...ESTADOS_DETALLE_ORDEN], {
+        message: `El estado de la línea debe ser uno de: ${ESTADOS_DETALLE_ORDEN.join(', ')}.`,
+    })
+    estado?: string;
+
+    @Transform(({ value }) => recortarOpcional(value))
+    @IsOptional()
+    @IsDateString({}, { message: 'La fecha de entrega de la línea no es válida.' })
+    fecha_entrega?: string;
+
+    @Transform(({ value }) => recortarOpcional(value))
+    @IsOptional()
     @IsUrl(
         { protocols: ['http', 'https'], require_protocol: true },
         { message: 'La imagen de referencia debe ser una URL http o https.' },
@@ -87,10 +118,14 @@ export class CreateOrdenDto {
     @IsUUID(undefined, { message: 'El cliente_id debe ser un UUID válido.' })
     cliente_id: string;
 
+    /**
+     * Atajo opcional: rellena `fecha_entrega` en líneas que no la traen.
+     * La UX “aplicar a todas” debe vivir en el front; esto solo evita tedio parcial.
+     */
     @Transform(({ value }) => recortarOpcional(value))
     @IsOptional()
-    @IsDateString({}, { message: 'La fecha de entrega estimada no es válida.' })
-    fecha_entrega_estimada?: string;
+    @IsDateString({}, { message: 'La fecha de entrega por defecto no es válida.' })
+    fecha_entrega_default?: string;
 
     @Type(() => Number)
     @IsOptional()
@@ -105,6 +140,16 @@ export class CreateOrdenDto {
     @ValidateNested({ each: true })
     @Type(() => OrdenDetalleDto)
     detalles: OrdenDetalleDto[];
+}
+
+export class ActualizarEstadoDetalleDto {
+    @Transform(({ value }) => recortarTexto(value))
+    @IsString()
+    @IsNotEmpty({ message: 'El estado es obligatorio.' })
+    @IsIn([...ESTADOS_DETALLE_ORDEN], {
+        message: `El estado de la línea debe ser uno de: ${ESTADOS_DETALLE_ORDEN.join(', ')}.`,
+    })
+    estado: string;
 }
 
 export class RegistrarPagoDto {
