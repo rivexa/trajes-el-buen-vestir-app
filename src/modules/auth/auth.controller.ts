@@ -1,6 +1,6 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
-import { UsuarioPublico } from '../usuarios/usuario.modelo';
+import type { UsuarioPublico } from '../usuarios/usuario.modelo';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './current-user.decorator';
 import { LoginDto } from './dto/login.dto';
