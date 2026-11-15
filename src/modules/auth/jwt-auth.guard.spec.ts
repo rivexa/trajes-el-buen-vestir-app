@@ -3,6 +3,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 import { ClientesController } from '../clientes/clientes.controller';
@@ -26,12 +27,9 @@ describe('JwtAuthGuard (global)', () => {
     const usuarioActivo = {
         id: '11111111-1111-1111-1111-111111111111',
         usuario: 'admin',
-        password_hash: 'hash',
         nombre: 'Admin Sistema',
         rol: 'admin' as const,
         activo: true,
-        created_at: '2026-01-01T00:00:00.000Z',
-        updated_at: '2026-01-01T00:00:00.000Z',
     };
 
     const usuariosService = {
@@ -83,6 +81,7 @@ describe('JwtAuthGuard (global)', () => {
             imports: [
                 ConfigModule.forRoot({ isGlobal: true }),
                 PassportModule.register({ defaultStrategy: 'jwt' }),
+                ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 100 }]),
                 JwtModule.register({
                     secret: 'test-secret-commit-4',
                     signOptions: { expiresIn: '1h' },
@@ -106,7 +105,10 @@ describe('JwtAuthGuard (global)', () => {
                 JwtAuthGuard,
                 { provide: APP_GUARD, useClass: JwtAuthGuard },
             ],
-        }).compile();
+        })
+            .overrideGuard(ThrottlerGuard)
+            .useValue({ canActivate: () => true })
+            .compile();
 
         app = module.createNestApplication();
         app.useGlobalPipes(new ValidationPipe({

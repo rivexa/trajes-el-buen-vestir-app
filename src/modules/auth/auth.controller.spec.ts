@@ -1,5 +1,6 @@
 import { ExecutionContext, INestApplication, UnauthorizedException, ValidationPipe } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard } from '@nestjs/throttler';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 import { AuthController } from './auth.controller';
@@ -38,7 +39,10 @@ describe('AuthController', () => {
                     },
                 },
             ],
-        }).compile();
+        })
+            .overrideGuard(ThrottlerGuard)
+            .useValue({ canActivate: () => true })
+            .compile();
 
         app = module.createNestApplication();
         app.useGlobalPipes(new ValidationPipe({
@@ -75,6 +79,7 @@ describe('AuthController', () => {
             token_type: 'Bearer',
             user: { id: '1', nombre: 'Admin', rol: 'admin' },
         });
+        expect(JSON.stringify(respuesta.body)).not.toMatch(/password/i);
     });
 
     it('responde 401 con message si las credenciales fallan', async () => {
@@ -98,6 +103,14 @@ describe('AuthController', () => {
         expect(authService.login).not.toHaveBeenCalled();
     });
 
+    it('responde 400 si la contraseña es demasiado corta', async () => {
+        await request(app.getHttpServer())
+            .post('/auth/login')
+            .send({ usuario: 'admin', password: '123' })
+            .expect(400);
+        expect(authService.login).not.toHaveBeenCalled();
+    });
+
     it('GET /auth/me devuelve el usuario autenticado', async () => {
         const respuesta = await request(app.getHttpServer())
             .get('/auth/me')
@@ -109,5 +122,6 @@ describe('AuthController', () => {
             rol: 'admin',
             usuario: 'admin',
         });
+        expect(respuesta.body).not.toHaveProperty('password_hash');
     });
 });

@@ -3,6 +3,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
+import { ThrottlerModule } from '@nestjs/throttler';
 import type { StringValue } from 'ms';
 import { UsuariosModule } from '../usuarios/usuarios.module';
 import { AuthController } from './auth.controller';
@@ -14,6 +15,13 @@ import { JwtStrategy } from './jwt.strategy';
     imports: [
         UsuariosModule,
         PassportModule.register({ defaultStrategy: 'jwt' }),
+        ThrottlerModule.forRoot([
+            {
+                name: 'default',
+                ttl: 60_000,
+                limit: 5,
+            },
+        ]),
         JwtModule.registerAsync({
             imports: [ConfigModule],
             inject: [ConfigService],
