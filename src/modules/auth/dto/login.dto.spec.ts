@@ -17,4 +17,16 @@ describe('LoginDto', () => {
         expect(errors.some((error) => error.property === 'usuario')).toBe(true);
         expect(errors.some((error) => error.property === 'password')).toBe(true);
     });
+
+    it('exige password con al menos 6 caracteres', async () => {
+        const dto = plainToInstance(LoginDto, { usuario: 'admin', password: '12345' });
+        const errors = await validate(dto);
+        expect(errors.some((error) => error.property === 'password')).toBe(true);
+    });
+
+    it('rechaza usuario vacío tras trim', async () => {
+        const dto = plainToInstance(LoginDto, { usuario: '   ', password: 'Admin123!' });
+        const errors = await validate(dto);
+        expect(errors.some((error) => error.property === 'usuario')).toBe(true);
+    });
 });

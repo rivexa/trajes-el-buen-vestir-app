@@ -22,7 +22,9 @@ export interface UsuarioPublico {
     rol: RolUsuario;
 }
 
-export function aUsuarioPublico(usuario: UsuarioRegistro): UsuarioPublico {
+export function aUsuarioPublico(
+    usuario: Pick<UsuarioRegistro, 'id' | 'usuario' | 'nombre' | 'rol'>,
+): UsuarioPublico {
     return {
         id: usuario.id,
         usuario: usuario.usuario,

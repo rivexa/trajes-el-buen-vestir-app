@@ -1,6 +1,6 @@
 import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { SupabaseService } from '../../config/supabase.service';
-import { UsuarioRegistro } from './usuario.modelo';
+import { UsuarioPublico, UsuarioRegistro } from './usuario.modelo';
 
 @Injectable()
 export class UsuariosService {
@@ -23,10 +23,13 @@ export class UsuariosService {
         return (data as UsuarioRegistro | null) ?? null;
     }
 
-    async buscarPorId(id: string): Promise<UsuarioRegistro | null> {
+    /**
+     * Sesión JWT: no selecciona password_hash para no arrastrarlo en memoria/responses.
+     */
+    async buscarPorId(id: string): Promise<(UsuarioPublico & { activo: boolean }) | null> {
         const { data, error } = await this.supabaseService.getClient()
             .from('usuarios')
-            .select('id, usuario, password_hash, nombre, rol, activo, created_at, updated_at')
+            .select('id, usuario, nombre, rol, activo')
             .eq('id', id)
             .maybeSingle();
 
@@ -35,6 +38,6 @@ export class UsuariosService {
             throw new InternalServerErrorException('No se pudo validar la sesión.');
         }
 
-        return (data as UsuarioRegistro | null) ?? null;
+        return (data as (UsuarioPublico & { activo: boolean }) | null) ?? null;
     }
 }
