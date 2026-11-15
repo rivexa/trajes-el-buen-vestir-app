@@ -1,5 +1,18 @@
-import { Controller, Post, Body, Get, Param, Patch, Delete, Query, ParseUUIDPipe } from '@nestjs/common';
-import { CreateOrdenDto, RegistrarPagoDto } from './dto/orden.dto';
+import {
+    Controller,
+    Post,
+    Body,
+    Get,
+    Param,
+    Patch,
+    Delete,
+    Query,
+    ParseUUIDPipe,
+    DefaultValuePipe,
+    ParseIntPipe,
+} from '@nestjs/common';
+import { ActualizarEstadoDetalleDto, CreateOrdenDto, RegistrarPagoDto } from './dto/orden.dto';
+import { ORDENES_LIMITE_POR_DEFECTO, ORDENES_PAGINA_MINIMA } from './ordenes.consulta';
 import { OrdenesService } from './ordenes.service';
 
 @Controller('ordenes')
@@ -8,11 +21,25 @@ export class OrdenesController {
 
     @Get()
     async obtenerTodas(
-        @Query('page') page: string,
-        @Query('limit') limit: string,
-        @Query('search') search: string,
+        @Query('page', new DefaultValuePipe(ORDENES_PAGINA_MINIMA), ParseIntPipe) page: number,
+        @Query('limit', new DefaultValuePipe(ORDENES_LIMITE_POR_DEFECTO), ParseIntPipe) limit: number,
+        @Query('search') search?: string,
+        @Query('estado') estado?: string,
+        @Query('desde') desde?: string,
+        @Query('hasta') hasta?: string,
+        @Query('sort') sort?: string,
+        @Query('order') order?: 'asc' | 'desc',
     ) {
-        return this.ordenesService.obtenerTodos(Number(page) || 1, Number(limit) || 10, search);
+        return this.ordenesService.obtenerTodos({
+            page,
+            limit,
+            search,
+            estado,
+            desde,
+            hasta,
+            sort,
+            order,
+        });
     }
 
     @Get('pagos/historial')
@@ -46,12 +73,13 @@ export class OrdenesController {
         return this.ordenesService.actualizarOrden(id, body);
     }
 
-    @Patch(':id/estado')
-    async cambiarEstadoOrden(
+    @Patch(':id/detalles/:detalleId/estado')
+    async cambiarEstadoDetalle(
         @Param('id', ParseUUIDPipe) id: string,
-        @Body('estado') estado: string,
+        @Param('detalleId', ParseUUIDPipe) detalleId: string,
+        @Body() body: ActualizarEstadoDetalleDto,
     ) {
-        return this.ordenesService.actualizarEstado(id, estado);
+        return this.ordenesService.actualizarEstadoDetalle(id, detalleId, body.estado);
     }
 
     @Patch(':id/pago')

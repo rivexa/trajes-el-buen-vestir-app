@@ -504,7 +504,7 @@ export class FacturacionService implements OnModuleInit, OnModuleDestroy {
 
         const { data, error } = await this.supabaseService.getClient()
             .from('ordenes_pedido')
-            .select('id, cliente_id, estado, factura_id, abono, saldo, subtotal, orden_detalles(descripcion, cantidad, precio_unitario)')
+            .select('id, cliente_id, factura_id, abono, saldo, subtotal, orden_detalles(tipo_item, estado, descripcion, cantidad, precio_unitario)')
             .in('id', ids);
 
         if (error) {
@@ -520,7 +520,16 @@ export class FacturacionService implements OnModuleInit, OnModuleDestroy {
             if (!orden) {
                 throw new NotFoundException('Una de las órdenes de pedido no existe.');
             }
-            if (orden.estado === 'Anulada') {
+
+            const detallesOrden = (orden.orden_detalles ?? []) as Array<{
+                tipo_item?: string;
+                estado?: string;
+                descripcion: string;
+                cantidad: number;
+                precio_unitario: number;
+            }>;
+
+            if (detallesOrden.length > 0 && detallesOrden.every((item) => item.estado === 'Anulada')) {
                 throw new BadRequestException('No se puede facturar una orden anulada.');
             }
             if (orden.factura_id) {
@@ -530,15 +539,15 @@ export class FacturacionService implements OnModuleInit, OnModuleDestroy {
                 throw new BadRequestException('Una de las órdenes no pertenece al cliente indicado.');
             }
 
-            const lineasOrden = (orden.orden_detalles ?? []).map((item: {
-                descripcion: string;
-                cantidad: number;
-                precio_unitario: number;
-            }) => ({
-                descripcion: item.descripcion,
-                cantidad: Number(item.cantidad),
-                precio_unitario: redondearDinero(Number(item.precio_unitario)),
-            }));
+            // Incluye todos los tipos facturables (Confección, Uniformes, Arreglos y Venta).
+            // Solo se excluyen líneas Anulada.
+            const lineasOrden = detallesOrden
+                .filter((item) => item.estado !== 'Anulada')
+                .map((item) => ({
+                    descripcion: item.descripcion,
+                    cantidad: Number(item.cantidad),
+                    precio_unitario: redondearDinero(Number(item.precio_unitario)),
+                }));
 
             if (lineasOrden.length === 0) {
                 throw new BadRequestException('Una de las órdenes no tiene detalles para facturar.');
