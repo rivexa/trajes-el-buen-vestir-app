@@ -41,6 +41,8 @@ const cliente = {
 };
 
 const detalleOrden = {
+    tipo_item: 'Confección a Medida',
+    estado: 'Pendiente',
     descripcion: 'Traje de lino',
     cantidad: 1,
     precio_unitario: 200,
@@ -158,6 +160,74 @@ describe('FacturacionService', () => {
         }));
     });
 
+    it('incluye líneas de tipo Venta al facturar y omite Anulada', async () => {
+        const clientes = consultaSupabase({ data: cliente, error: null });
+        const ordenes = consultaSupabase(
+            {
+                data: [{
+                    id: ORDEN_ID,
+                    cliente_id: CLIENTE_ID,
+                    factura_id: null,
+                    abono: 0,
+                    saldo: 90,
+                    subtotal: 90,
+                    orden_detalles: [
+                        {
+                            tipo_item: 'Venta',
+                            estado: 'Pendiente',
+                            descripcion: 'Corbata',
+                            cantidad: 1,
+                            precio_unitario: 30,
+                        },
+                        {
+                            tipo_item: 'Arreglos',
+                            estado: 'Anulada',
+                            descripcion: 'Basta',
+                            cantidad: 1,
+                            precio_unitario: 15,
+                        },
+                        {
+                            tipo_item: 'Uniformes',
+                            estado: 'Terminado',
+                            descripcion: 'Camisa uniforme',
+                            cantidad: 1,
+                            precio_unitario: 60,
+                        },
+                    ],
+                }],
+                error: null,
+            },
+            { data: { id: ORDEN_ID }, error: null },
+        );
+        const facturas = consultaSupabase(
+            { data: { id: FACTURA_ID, secuencial_local: 8 }, error: null },
+            { data: null, error: null },
+        );
+        const detalles = consultaSupabase({ data: null, error: null });
+        from.mockImplementation((tabla: string) => {
+            if (tabla === 'clientes') return clientes;
+            if (tabla === 'ordenes_pedido') return ordenes;
+            if (tabla === 'factura_detalles') return detalles;
+            return facturas;
+        });
+
+        await service.emitirFactura({
+            cliente_id: CLIENTE_ID,
+            orden_id: ORDEN_ID,
+        });
+
+        expect(detalles.insert).toHaveBeenCalledWith([
+            expect.objectContaining({ descripcion: 'Corbata', precio_unitario: 30 }),
+            expect.objectContaining({ descripcion: 'Camisa uniforme', precio_unitario: 60 }),
+        ]);
+        expect(sriService.procesarFacturaElectronica).toHaveBeenCalledWith(expect.objectContaining({
+            items: expect.arrayContaining([
+                expect.objectContaining({ descripcion: 'Corbata' }),
+                expect.objectContaining({ descripcion: 'Camisa uniforme' }),
+            ]),
+        }));
+    });
+
     it('suma varias órdenes y cancela el saldo de cada una', async () => {
         const clientes = consultaSupabase({ data: cliente, error: null });
         const ordenes = consultaSupabase(
@@ -181,7 +251,13 @@ describe('FacturacionService', () => {
                         abono: 0,
                         saldo: 80,
                         subtotal: 80,
-                        orden_detalles: [{ descripcion: 'Camisa', cantidad: 1, precio_unitario: 80 }],
+                        orden_detalles: [{
+                            tipo_item: 'Venta',
+                            estado: 'Pendiente',
+                            descripcion: 'Camisa',
+                            cantidad: 1,
+                            precio_unitario: 80,
+                        }],
                     },
                 ],
                 error: null,
