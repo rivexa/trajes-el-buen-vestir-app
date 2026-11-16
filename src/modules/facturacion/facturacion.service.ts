@@ -10,7 +10,7 @@ import {
 } from '@nestjs/common';
 import { SupabaseService } from '../../config/supabase.service';
 import { CreateFacturaDto, FacturaDetalleDto } from './dto/factura.dto';
-import { acotarPaginacionFacturas, sanitizarBusquedaFactura } from './facturacion.consulta';
+import { acotarPaginacionFacturas, clasificarBusquedaFactura } from './facturacion.consulta';
 import { redondearDinero, subtotalDetalles } from './facturacion.dinero';
 import { SriService } from '../sri/sri.service';
 import { FacturaSRIDto, ResultadoSri } from '../sri/sri.interface';
@@ -44,17 +44,30 @@ export class FacturacionService implements OnModuleInit, OnModuleDestroy {
 
     async obtenerTodas(page?: number, limit?: number, search = '') {
         const { page: pagina, limit: tamano } = acotarPaginacionFacturas(page, limit);
-        const termino = sanitizarBusquedaFactura(search);
         const from = (pagina - 1) * tamano;
         const to = from + tamano - 1;
         const supabase = this.supabaseService.getClient();
 
         let query = supabase
             .from('facturas')
-            .select('*, clientes!inner(nombres, apellidos, cedula_ruc), ordenes_pedido!facturas_orden_id_fkey(numero_orden)', { count: 'exact' });
+            .select(
+                '*, clientes!inner(nombres, apellidos, cedula_ruc), ordenes_pedido!facturas_orden_id_fkey(numero_orden)',
+                { count: 'exact' },
+            );
 
-        if (termino) {
-            query = query.or(`clientes.cedula_ruc.ilike.%${termino}%,clientes.nombres.ilike.%${termino}%,clientes.apellidos.ilike.%${termino}%`);
+        const busqueda = clasificarBusquedaFactura(search);
+        if (busqueda.tipo === 'cedula') {
+            query = query.eq('clientes.cedula_ruc', busqueda.valor);
+        } else if (busqueda.tipo === 'numero_factura') {
+            // secuencial_local (entero) o numero_factura_sri (texto con ceros)
+            query = query.or(
+                `secuencial_local.eq.${busqueda.secuencial},numero_factura_sri.eq.${busqueda.valor},numero_factura_sri.eq.${busqueda.valor.padStart(9, '0')}`,
+            );
+        } else if (busqueda.tipo === 'cliente') {
+            query = query.or(
+                `nombres.ilike.%${busqueda.valor}%,apellidos.ilike.%${busqueda.valor}%,cedula_ruc.ilike.%${busqueda.valor}%`,
+                { foreignTable: 'clientes' },
+            );
         }
 
         const { data, count, error } = await query.order('fecha_emision', { ascending: false }).range(from, to);
