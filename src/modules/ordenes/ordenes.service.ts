@@ -6,8 +6,8 @@ import {
     ORDENES_LIMITE_POR_DEFECTO,
     ORDENES_PAGINA_MINIMA,
     OrdenesListadoQuery,
+    clasificarBusquedaOrden,
     parseEstadosFiltro,
-    sanitizarBusquedaOrdenes,
 } from './ordenes.consulta';
 import { redondearDinero, subtotalDetalles } from './ordenes.dinero';
 
@@ -32,28 +32,21 @@ export class OrdenesService {
             .from('ordenes_pedido')
             .select(
                 filtraPorDetalle
-                    ? '*, clientes!inner(nombres, apellidos, cedula_ruc), orden_detalles!inner(*)'
-                    : '*, clientes!inner(nombres, apellidos, cedula_ruc), orden_detalles(*)',
+                    ? '*, clientes!inner(nombres, apellidos, cedula_ruc), orden_detalles!inner(id, tipo_item, estado, fecha_entrega, descripcion, cantidad, precio_unitario, imagen_referencia_url)'
+                    : '*, clientes!inner(nombres, apellidos, cedula_ruc), orden_detalles(id, tipo_item, estado, fecha_entrega, descripcion, cantidad, precio_unitario, imagen_referencia_url)',
                 { count: 'exact' },
             );
 
-        const search = sanitizarBusquedaOrdenes(query.search);
-        if (search) {
-            const cleanSearch = search.replace(/^ord-?/i, '');
-            const isNumeric = /^\d+$/.test(cleanSearch);
-
-            if (isNumeric) {
-                if (cleanSearch.length >= 10) {
-                    builder = builder.eq('clientes.cedula_ruc', cleanSearch);
-                } else {
-                    builder = builder.eq('numero_orden', parseInt(cleanSearch, 10));
-                }
-            } else {
-                builder = builder.or(
-                    `nombres.ilike.%${cleanSearch}%,apellidos.ilike.%${cleanSearch}%,cedula_ruc.ilike.%${cleanSearch}%`,
-                    { foreignTable: 'clientes' },
-                );
-            }
+        const busqueda = clasificarBusquedaOrden(query.search);
+        if (busqueda.tipo === 'cedula') {
+            builder = builder.eq('clientes.cedula_ruc', busqueda.valor);
+        } else if (busqueda.tipo === 'numero_orden') {
+            builder = builder.eq('numero_orden', busqueda.valor);
+        } else if (busqueda.tipo === 'cliente') {
+            builder = builder.or(
+                `nombres.ilike.%${busqueda.valor}%,apellidos.ilike.%${busqueda.valor}%,cedula_ruc.ilike.%${busqueda.valor}%`,
+                { foreignTable: 'clientes' },
+            );
         }
 
         if (estados.length === 1) {

@@ -347,15 +347,36 @@ describe('FacturacionService', () => {
         })).rejects.toBeInstanceOf(ConflictException);
     });
 
-    it('sanitiza el search antes de interpolarlo en el filtro', async () => {
+    it('busca por nombre de cliente en la tabla embebida', async () => {
         const consulta = consultaSupabase({ data: [], count: 0, error: null });
         from.mockReturnValue(consulta);
 
         await service.obtenerTodas(1, 10, 'juan,nombres.eq.hack');
 
         expect(consulta.or).toHaveBeenCalledWith(
-            'clientes.cedula_ruc.ilike.%juannombres.eq.hack%,clientes.nombres.ilike.%juannombres.eq.hack%,clientes.apellidos.ilike.%juannombres.eq.hack%',
+            'nombres.ilike.%juannombres.eq.hack%,apellidos.ilike.%juannombres.eq.hack%,cedula_ruc.ilike.%juannombres.eq.hack%',
+            { foreignTable: 'clientes' },
         );
+    });
+
+    it('busca por número de factura (secuencial)', async () => {
+        const consulta = consultaSupabase({ data: [], count: 0, error: null });
+        from.mockReturnValue(consulta);
+
+        await service.obtenerTodas(1, 10, '8');
+
+        expect(consulta.or).toHaveBeenCalledWith(
+            'secuencial_local.eq.8,numero_factura_sri.eq.8,numero_factura_sri.eq.000000008',
+        );
+    });
+
+    it('busca por cédula exacta del cliente', async () => {
+        const consulta = consultaSupabase({ data: [], count: 0, error: null });
+        from.mockReturnValue(consulta);
+
+        await service.obtenerTodas(1, 10, '1710034065');
+
+        expect(consulta.eq).toHaveBeenCalledWith('clientes.cedula_ruc', '1710034065');
     });
 
     it('no aplica filtro cuando el search queda vacío al sanitizar', async () => {
@@ -365,6 +386,7 @@ describe('FacturacionService', () => {
         await service.obtenerTodas(1, 10, ',,,%%%');
 
         expect(consulta.or).not.toHaveBeenCalled();
+        expect(consulta.eq).not.toHaveBeenCalled();
     });
 
     it('responde 404 si la factura a consultar no existe', async () => {
