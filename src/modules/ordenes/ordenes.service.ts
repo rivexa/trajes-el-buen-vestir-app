@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { SupabaseService } from '../../config/supabase.service';
+import { MensajeriaService } from '../mensajeria/mensajeria.service';
 import { CreateOrdenDto, OrdenDetalleDto } from './dto/orden.dto';
 import { lineasTodasAnuladas, normalizarTipoItem } from './ordenes.dominio';
 import {
@@ -15,7 +16,10 @@ import { redondearDinero, subtotalDetalles } from './ordenes.dinero';
 export class OrdenesService {
     private readonly logger = new Logger(OrdenesService.name);
 
-    constructor(private readonly supabaseService: SupabaseService) { }
+    constructor(
+        private readonly supabaseService: SupabaseService,
+        private readonly mensajeriaService: MensajeriaService,
+    ) { }
 
     async obtenerTodos(query: OrdenesListadoQuery = {}) {
         const supabase = this.supabaseService.getClient();
@@ -301,9 +305,25 @@ export class OrdenesService {
 
         if (error) this.falloPersistencia(error, 'No se pudo actualizar el estado de la línea.');
 
+        let aviso: Awaited<ReturnType<MensajeriaService['avisarPorEstado']>> | null = null;
+        try {
+            aviso = await this.mensajeriaService.avisarPorEstado({
+                detalleId,
+                ordenId,
+                estado: nuevoEstado,
+                fechaEntrega: data?.fecha_entrega,
+                descripcion: data?.descripcion,
+            });
+        } catch (err) {
+            this.logger.error(
+                `Aviso WhatsApp falló tras cambiar estado (no se revierte el estado): ${err instanceof Error ? err.message : err}`,
+            );
+        }
+
         return {
             mensaje: 'Estado de la línea actualizado correctamente',
             detalle: data,
+            aviso,
         };
     }
 

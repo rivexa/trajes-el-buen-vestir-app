@@ -6,6 +6,7 @@ import { ClientesModule } from './modules/clientes/clientes.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { OrdenesModule } from './modules/ordenes/ordenes.module';
 import { FacturacionModule } from './modules/facturacion/facturacion.module';
+import { MensajeriaModule } from './modules/mensajeria/mensajeria.module';
 import { UsuariosModule } from './modules/usuarios/usuarios.module';
 
 @Module({
@@ -20,6 +21,7 @@ import { UsuariosModule } from './modules/usuarios/usuarios.module';
     OrdenesModule,
     FacturacionModule,
     DashboardModule,
+    MensajeriaModule,
   ],
 })
 export class AppModule {}

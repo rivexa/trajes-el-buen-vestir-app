@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { SupabaseService } from '../../config/supabase.service';
+import { MensajeriaService } from '../mensajeria/mensajeria.service';
 import { OrdenesService } from './ordenes.service';
 
 type ResultadoConsulta = {
@@ -34,15 +35,22 @@ describe('OrdenesService', () => {
     let service: OrdenesService;
     let from: jest.Mock;
 
+    const mensajeriaService = {
+        avisarPorEstado: jest.fn().mockResolvedValue({ enviado: false, motivo: 'estado_sin_aviso' }),
+    };
+
     beforeEach(async () => {
         from = jest.fn();
         const module: TestingModule = await Test.createTestingModule({
             providers: [
                 OrdenesService,
                 { provide: SupabaseService, useValue: { getClient: () => ({ from }) } },
+                { provide: MensajeriaService, useValue: mensajeriaService },
             ],
         }).compile();
         service = module.get(OrdenesService);
+        jest.clearAllMocks();
+        mensajeriaService.avisarPorEstado.mockResolvedValue({ enviado: false, motivo: 'estado_sin_aviso' });
     });
 
     it('debe construirse con el mock de Supabase', () => {
@@ -115,20 +123,39 @@ describe('OrdenesService', () => {
         await expect(service.registrarPago(ORDEN_ID, 10)).rejects.toBeInstanceOf(ConflictException);
     });
 
-    it('actualiza el estado de una línea', async () => {
+    it('actualiza el estado de una línea y dispara aviso WhatsApp', async () => {
         const detalles = consultaSupabase(
             { data: { id: DETALLE_ID, orden_id: ORDEN_ID, estado: 'Pendiente' }, error: null },
-            { data: { id: DETALLE_ID, orden_id: ORDEN_ID, estado: 'Terminado' }, error: null },
+            {
+                data: {
+                    id: DETALLE_ID,
+                    orden_id: ORDEN_ID,
+                    estado: 'Terminado',
+                    fecha_entrega: '2026-04-01',
+                    descripcion: 'Traje',
+                },
+                error: null,
+            },
         );
         from.mockReturnValue(detalles);
+        mensajeriaService.avisarPorEstado.mockResolvedValue({ enviado: true, motivo: 'ok' });
 
         await expect(service.actualizarEstadoDetalle(ORDEN_ID, DETALLE_ID, 'Terminado'))
             .resolves.toEqual(expect.objectContaining({
                 mensaje: 'Estado de la línea actualizado correctamente',
                 detalle: expect.objectContaining({ estado: 'Terminado' }),
+                aviso: { enviado: true, motivo: 'ok' },
             }));
         expect(detalles.update).toHaveBeenCalledWith({ estado: 'Terminado' });
+        expect(mensajeriaService.avisarPorEstado).toHaveBeenCalledWith({
+            detalleId: DETALLE_ID,
+            ordenId: ORDEN_ID,
+            estado: 'Terminado',
+            fechaEntrega: '2026-04-01',
+            descripcion: 'Traje',
+        });
     });
+
 
     it('agrupa el historial de pagos por día en Ecuador', async () => {
         from.mockReturnValue(consultaSupabase({
