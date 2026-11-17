@@ -45,7 +45,7 @@ describe('ClientesController', () => {
         };
         clientesService.crearCliente.mockResolvedValue(body);
 
-        await expect(controller.crearCliente(body)).resolves.toEqual(body);
+        await expect(controller.crearCliente(body as never)).resolves.toEqual(body);
         expect(clientesService.crearCliente).toHaveBeenCalledWith(body);
     });
 
